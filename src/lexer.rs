@@ -403,8 +403,7 @@ fn is_digit_for_base(ch: char, base: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::Tokenizer;
-    use crate::models::tokens::TokenKind;
+    use crate::{lexer::Tokenizer, models::tokens::TokenKind};
 
     #[test]
     fn tokenizes_instruction_line() {
