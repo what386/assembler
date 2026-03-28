@@ -1,3 +1,6 @@
+mod models;
+mod lexer;
+
 fn main() {
-    println!("Hello, world!");
+    println!("Hello, World!");
 }
