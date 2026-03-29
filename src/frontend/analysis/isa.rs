@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperandKind {
+pub enum OperandFormatKind {
     Register,
     Condition,
     Address,
@@ -12,14 +12,14 @@ pub enum OperandKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OperandFormat {
     pub operand_order: u8,
-    pub kind: OperandKind,
+    pub kind: OperandFormatKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bitfield {
     Operand(OperandFormat),
     Kind(u8), // bit length
-    Pad(u64),
+    Pad{ data: i32, length: u8 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,20 +29,16 @@ pub struct InstFmt {
     pub bitfields: &'static [Bitfield],
 }
 
-
-// isnt it so awesome and cool you cant just disable
-// formatting for blocks like you can do with clangd
-
-macro_rules! reg  { ($order:expr)            => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandKind::Register }) }; }
-macro_rules! cond { ($order:expr)            => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandKind::Condition }) }; }
-macro_rules! addr { ($order:expr)            => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandKind::Address }) }; }
-macro_rules! ptr  { ($order:expr)            => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandKind::Pointer }) }; }
-macro_rules! off  { ($order:expr, $len:expr) => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandKind::Offset { bit_length: $len } }) }; }
-macro_rules! ptroff { ($order:expr)          => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandKind::OffsetPointer }) }; }
-macro_rules! imm  { ($order:expr, $len:expr) => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandKind::Immediate { bit_length: $len } }) }; }
+macro_rules! reg  { ($order:expr)            => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandFormatKind::Register }) }; }
+macro_rules! cond { ($order:expr)            => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandFormatKind::Condition }) }; }
+macro_rules! addr { ($order:expr)            => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandFormatKind::Address }) }; }
+macro_rules! ptr  { ($order:expr)            => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandFormatKind::Pointer }) }; }
+macro_rules! off  { ($order:expr, $len:expr) => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandFormatKind::Offset { bit_length: $len } }) }; }
+macro_rules! ptroff { ($order:expr)          => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandFormatKind::OffsetPointer }) }; }
+macro_rules! imm  { ($order:expr, $len:expr) => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OperandFormatKind::Immediate { bit_length: $len } }) }; }
 
 macro_rules! kind { ($len:expr) => { Bitfield::Kind($len) }; }
-macro_rules! pad { ($len:expr) => { Bitfield::Pad($len) }; }
+macro_rules! pad { ($data:expr, $len:expr) => { Bitfield::Pad{data: $data, length: $len} }; }
 
 macro_rules! inst {
     ($bits:literal, $name:literal, [$($field:expr),* $(,)?]) => {
@@ -52,7 +48,7 @@ macro_rules! inst {
 
 #[rustfmt::skip]
 pub const INSTRUCTION_SET: &[InstFmt] = &[
-    inst!("00000", "func", [kind!(3), pad!(8)]),                        // misc functions
+    inst!("00000", "func", [kind!(3), pad!(0,8)]),                      // misc functions
     inst!("00001", "ctrl", [kind!(3), imm!(0,8)]),                      // control commands
     inst!("00010", "in",   [reg!(0),  addr!(1)]),                       // input
     inst!("00011", "out",  [reg!(1),  addr!(0)]),                       // output
@@ -78,14 +74,19 @@ pub const INSTRUCTION_SET: &[InstFmt] = &[
     inst!("10111", "tsti", [reg!(0),  imm!(1,8)]),                      // test immediate
     inst!("11000", "add",  [reg!(0),  reg!(1), kind!(2), reg!(2)]),     // addition
     inst!("11001", "sub",  [reg!(0),  reg!(1), kind!(2), reg!(2)]),     // subtraction
-    inst!("11010", "bitw", [reg!(0),  reg!(1), kind!(2), reg!(2)]),     // bitwise ops
-    inst!("11011", "bntw", [reg!(0),  reg!(1), kind!(2), reg!(2)]),     // inverse bitwise ops
+    inst!("11010", "bitw", [reg!(0),  reg!(1), kind!(2), reg!(2)]),     // bitwise
+    inst!("11011", "bntw", [reg!(0),  reg!(1), kind!(2), reg!(2)]),     // inverse bitwise
     inst!("11100", "bsh",  [reg!(0),  reg!(1), kind!(2), reg!(2)]),     // barrel shift
     inst!("11101", "bshi", [reg!(0),  reg!(1), kind!(2), imm!(2, 3)]),  // barrel shift immediate
     inst!("11110", "mdo",  [reg!(0),  reg!(1), kind!(2), reg!(2)]),     // multiply / divide
     inst!("11111", "btc",  [reg!(0),  reg!(1), kind!(2), imm!(2,3)]),   // bit count
 ];
 
+#[rustfmt::skip]
 pub const PSEUDO_INSTRUCTION_SET: &[InstFmt] = &[
-    inst!("00101", "brp",   [cond!(0), kind!(2), pad!(3), ptr!(1)]),
+    inst!("00101", "brx",   [cond!(0), kind!(2), pad!(0,3), ptr!(1)]), // branch indexed -> branch
+    inst!("11001", "cmp",  [pad!(0,3),  reg!(0), pad!(0,2), reg!(1)]), // compare -> subtraction
+    inst!("11011", "not", [reg!(0), reg!(1), pad!(1,2), pad!(0, 3)]),  // NOT -> inverse bitwise
+    inst!("10010", "inc", [reg!(0), pad!(1,8)]),                       // increment -> add immediate
+    inst!("10010", "dec", [reg!(0), pad!(-1,8)]),                      // decrement -> add immediate
 ];
