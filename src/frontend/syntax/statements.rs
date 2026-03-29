@@ -1,6 +1,9 @@
 use crate::diagnostics::Span;
 
-pub type Register = u8;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Register {
+    R0, R1, R2, R3, R4, R5, R6, R7
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Address {
