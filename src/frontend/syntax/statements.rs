@@ -11,28 +11,17 @@ pub enum Address {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StdCondition {
-    Equal,
-    NotEqual,
-    Lower,
-    Higher,
-    LowerSame,
-    HigherSame,
-    Even,
-    Always
+    Equal, NotEqual, Lower, Higher, LowerSame, HigherSame, Even, Always
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AltCondition {
-    Overflow,
-    NoOverflow,
-    Less,
-    Greater,
-    LessEqual,
-    GreaterEqual,
-    Odd,
-    Always
+    Overflow, NoOverflow, Less, Greater, LessEqual, GreaterEqual, Odd, Always
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Condition {
     Standard(StdCondition),
     Alternate(AltCondition)
@@ -43,18 +32,20 @@ pub enum Operand {
     Register(Register),
     Immediate(i64),
     Address(Address),
+    Condition(Condition),
     Symbol(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatementKind {
-    Label { name: String },
-    Instruction {mnemonic: String, operands: Vec<Operand>},
-    Directive { name: String, args: Vec<String>},
+    Label,
+    Instruction(Vec<Operand>),
+    Directive(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Statement {
+    pub name: String,
     pub kind: StatementKind,
     pub span: Span,
 }
