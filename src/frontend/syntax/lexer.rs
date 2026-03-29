@@ -1,5 +1,5 @@
 use crate::{
-    diagnostics::{Diagnostic, DiagnosticLabel, Severity, Span},
+    diagnostics::{Diagnostic, DiagnosticCode, Span},
     frontend::syntax::tokens::{Token, TokenKind},
 };
 
@@ -57,9 +57,9 @@ impl<'a> Tokenizer<'a> {
                 }
                 _ => {
                     return Err(self.error_at(
+                        DiagnosticCode::UnexpectedCharacter(ch),
                         self.pos,
                         self.pos + ch.len_utf8(),
-                        format!("unexpected character `{ch}`"),
                     ));
                 }
             }
@@ -112,13 +112,13 @@ impl<'a> Tokenizer<'a> {
         if digits.is_empty() {
             let raw_end = self.pos.max(start + 1);
             return Err(self.error_at(
+                match base {
+                    16 => DiagnosticCode::ExpectedHexDigitsAfterPrefix,
+                    2 => DiagnosticCode::ExpectedBinaryDigitsAfterPrefix,
+                    _ => DiagnosticCode::ExpectedDigits,
+                },
                 start,
                 raw_end,
-                match base {
-                    16 => "expected at least one hexadecimal digit after `0x`".to_owned(),
-                    2 => "expected at least one binary digit after `0b`".to_owned(),
-                    _ => "expected digits".to_owned(),
-                },
             ));
         }
 
@@ -127,12 +127,11 @@ impl<'a> Tokenizer<'a> {
 
         if let Some(suffix_end) = self.invalid_integer_suffix_end() {
             return Err(self.error_at(
+                DiagnosticCode::InvalidIntegerLiteral(
+                    self.source[start..suffix_end].to_owned(),
+                ),
                 digits_start,
                 suffix_end,
-                format!(
-                    "invalid integer literal `{}`",
-                    &self.source[start..suffix_end]
-                ),
             ));
         }
 
@@ -154,16 +153,16 @@ impl<'a> Tokenizer<'a> {
             }
             Some(_) => {
                 return Err(self.error_at(
+                    DiagnosticCode::InvalidCharacterLiteralLength,
                     start,
                     self.pos,
-                    "character literal must contain exactly one character".to_owned(),
                 ));
             }
             None => {
                 return Err(self.error_at(
+                    DiagnosticCode::UnterminatedCharacterLiteral,
                     start,
                     self.pos,
-                    "unterminated character literal".to_owned(),
                 ));
             }
         }
@@ -191,9 +190,9 @@ impl<'a> Tokenizer<'a> {
                 }
                 Some('\n') | Some('\r') | None => {
                     return Err(self.error_at(
+                        DiagnosticCode::UnterminatedStringLiteral,
                         start,
                         self.pos,
-                        "unterminated string literal".to_owned(),
                     ));
                 }
                 Some(_) => value.push(self.lex_literal_char(start, "string literal")?),
@@ -237,14 +236,14 @@ impl<'a> Tokenizer<'a> {
                 Ok('\\')
             }
             Some(ch) => Err(self.error_at(
+                DiagnosticCode::UnsupportedEscapeSequence(ch),
                 self.pos,
                 self.pos + ch.len_utf8(),
-                format!("unsupported escape sequence `\\{ch}`"),
             )),
             None => Err(self.error_at(
+                DiagnosticCode::UnterminatedEscapeSequence,
                 literal_start,
                 self.pos,
-                "unterminated escape sequence".to_owned(),
             )),
         }
     }
@@ -260,9 +259,12 @@ impl<'a> Tokenizer<'a> {
                 self.lex_escape(literal_start)
             }
             Some('\n') | Some('\r') | None => Err(self.error_at(
+                match literal_kind {
+                    "string literal" => DiagnosticCode::UnterminatedStringLiteral,
+                    _ => DiagnosticCode::UnterminatedCharacterLiteral,
+                },
                 literal_start,
                 self.pos,
-                format!("unterminated {literal_kind}"),
             )),
             Some(ch) => {
                 self.bump();
@@ -317,9 +319,9 @@ impl<'a> Tokenizer<'a> {
     ) -> Result<i64, Diagnostic> {
         i64::from_str_radix(digits, base).map_err(|_| {
             self.error_at(
+                DiagnosticCode::IntegerOutOfRange(raw.to_owned()),
                 start,
                 self.pos,
-                format!("integer literal `{raw}` is out of range for i64"),
             )
         })
     }
@@ -352,22 +354,17 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn span(&self, start: usize, end: usize) -> Span {
-        Span {
-            file_id: self.file_id,
-            start,
-            end,
-        }
+        Span::new(self.file_id, start, end)
     }
 
-    fn error_at(&self, start: usize, end: usize, message: String) -> Diagnostic {
-        Diagnostic {
-            severity: Severity::Error,
-            message: message.clone(),
-            labels: vec![DiagnosticLabel {
-                span: self.span(start, end),
-                message,
-            }],
-        }
+    fn error_at(
+        &self,
+        code: DiagnosticCode,
+        start: usize,
+        end: usize,
+    ) -> Diagnostic {
+        let message = code.message();
+        Diagnostic::error_code(code).with_span_label(self.span(start, end), message)
     }
 
     fn peek(&self) -> Option<char> {
