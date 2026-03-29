@@ -1,6 +1,3 @@
-mod models;
-mod lexer;
-
 fn main() {
-    println!("Hello, World!");
+    todo!("assembler CLI scaffold");
 }
