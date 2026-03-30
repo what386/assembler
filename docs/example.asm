@@ -32,7 +32,7 @@ loop:
 
 .page 2
 done:
-    func.halt
+    halt
 
 .section data
 
