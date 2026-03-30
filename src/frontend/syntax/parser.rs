@@ -625,13 +625,16 @@ mod tests {
 
     #[test]
     fn parses_directives() {
-        let program = parse(".section text\n.bytes 0x00, 0x1c, 0xff\n.string \"text\"\n");
+        let program = parse(".page 1\n.bytes 0x00, 0x1c, 0xff\n.string \"text\"\n");
 
         assert!(matches!(
             &program.statements[0],
             Statement::Directive(directive)
-                if directive.name == "section"
-                    && directive.args == vec![DirectiveArg::Identifier("text".to_owned())]
+                if directive.name == "page"
+                    && directive.args == vec![DirectiveArg::Integer {
+                        raw: "1".to_owned(),
+                        value: 1,
+                    }]
         ));
 
         assert!(matches!(

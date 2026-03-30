@@ -77,7 +77,6 @@ fn apply_directive_location(
     directive: &DirectiveStatement,
 ) -> Result<i64, Diagnostic> {
     match directive.name.as_str() {
-        "section" => Ok(current),
         "page" => {
             let page = expect_integer_arg(directive, 0)?;
             Ok(page << 7)

@@ -70,13 +70,6 @@ impl Validator {
 
     fn validate_directive(&self, directive: &DirectiveStatement) -> Result<(), Diagnostic> {
         match directive.name.as_str() {
-            "section" => {
-                if matches!(directive.args.first(), Some(DirectiveArg::Identifier(_))) {
-                    Ok(())
-                } else {
-                    Err(self.directive_error(directive, "expected section name"))
-                }
-            }
             "page" | "org" | "zero" => {
                 if matches!(
                     directive.args.first(),
