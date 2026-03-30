@@ -176,6 +176,8 @@ pub const PSEUDO_INSTRUCTION_SET: &[InstFmt] = &[
     inst!("11011", "not", [reg!(0), reg!(1), pad!(1,2), pad!(0, 3)]),  // NOT -> inverse bitwise
     inst!("10010", "inc", [reg!(0), pad!(1,8)]),                       // increment -> add immediate
     inst!("10010", "dec", [reg!(0), pad!(-1,8)]),                      // decrement -> add immediate
+    inst!("00000", "halt", [pad!(0b001,3), pad!(0,8)]),                // halt processor
+    inst!("00000", "nop",  [pad!(0b010,3), pad!(0,8)]),                // no-op
 ];
 
 pub static INSTRUCTION_ALIASES: phf::Map<&'static str, (&'static str, u8)> = phf_map! {
@@ -241,8 +243,6 @@ pub static INSTRUCTION_ALIASES: phf::Map<&'static str, (&'static str, u8)> = phf
     "popcnt"=> ("btc",  0b11),
 
     //NOTE: 0b000 is illegal
-    "halt" => ("func", 0b001),
-    "nop" => ("func", 0b010),
     //"" => ("func", 0b011),
     //"" => ("func", 0b100),
     //"" => ("func", 0b101),
@@ -269,12 +269,14 @@ pub fn lookup_instruction(mnemonic: &str) -> Option<InstructionSpec> {
         });
     }
 
-    if let Some(fmt) = instruction_format(INSTRUCTION_SET, mnemonic) {
-        return Some(InstructionSpec {
-            fmt,
-            resolved_mnemonic: fmt.mnemonic,
-            kind: None,
-        });
+    if !matches!(mnemonic, "func" | "ctrl") {
+        if let Some(fmt) = instruction_format(INSTRUCTION_SET, mnemonic) {
+            return Some(InstructionSpec {
+                fmt,
+                resolved_mnemonic: fmt.mnemonic,
+                kind: None,
+            });
+        }
     }
 
     let fmt = instruction_format(PSEUDO_INSTRUCTION_SET, mnemonic)?;
