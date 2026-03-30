@@ -1,4 +1,3 @@
-.section text
 .page 0                  ; label syntax, comment style shown for intent only
 start:
     lim r0, 0x10
