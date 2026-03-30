@@ -1,5 +1,5 @@
 use crate::{
-    diagnostics::{Diagnostic, DiagnosticCode, DiagnosticLabel, Span},
+    diagnostics::{Diagnostic, DiagnosticCode, DiagnosticEmitter, DiagnosticLabel, Partial, Span},
     frontend::syntax::{
         statements::{
             Address, AltCondition, Condition, DirectiveArg, DirectiveStatement,
@@ -20,16 +20,23 @@ impl<'a> Parser<'a> {
         Self { tokens, pos: 0 }
     }
 
-    pub fn parse(&mut self) -> Result<Program, Diagnostic> {
+    pub fn parse(&mut self) -> Partial<Program> {
         let mut statements = Vec::new();
+        let mut emitter = DiagnosticEmitter::new();
 
         self.skip_newlines();
         while !self.at_end() {
-            statements.push(self.parse_statement()?);
+            match self.parse_statement() {
+                Ok(statement) => statements.push(statement),
+                Err(diagnostic) => {
+                    emitter.push(diagnostic);
+                    self.synchronize_statement();
+                }
+            }
             self.skip_newlines();
         }
 
-        Ok(Program { statements })
+        emitter.finish(Program { statements })
     }
 
     fn parse_statement(&mut self) -> Result<Statement, Diagnostic> {
@@ -485,6 +492,12 @@ impl<'a> Parser<'a> {
         matches!(self.current_kind(), TokenKind::Newline | TokenKind::Eof)
     }
 
+    fn synchronize_statement(&mut self) {
+        while !self.at_statement_end() {
+            self.bump();
+        }
+    }
+
     fn at_end(&self) -> bool {
         matches!(self.current_kind(), TokenKind::Eof)
     }
@@ -531,18 +544,21 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::frontend::syntax::{
-        lexer::Tokenizer,
-        parser::Parser,
-        statements::{
-            Address, AltCondition, Condition, DirectiveArg, Operand, Program, Register, Statement,
-            StdCondition,
+    use crate::{
+        frontend::syntax::{
+            lexer::Tokenizer,
+            parser::Parser,
+            statements::{
+                Address, AltCondition, Condition, DirectiveArg, Operand, Program, Register,
+                Statement, StdCondition,
+            },
         },
+        preprocessing::Preprocessor,
     };
 
     fn parse(source: &str) -> Program {
-        let tokens = Tokenizer::new(0, source).tokenize().unwrap();
-        Parser::new(&tokens).parse().unwrap()
+        let preprocessed = Preprocessor::new().preprocess(0, source).into_result().unwrap();
+        Parser::new(&preprocessed.tokens).parse().into_result().unwrap()
     }
 
     #[test]
@@ -642,22 +658,25 @@ mod tests {
 
     #[test]
     fn rejects_bang_prefixed_immediates() {
-        let tokens = Tokenizer::new(0, "lim r0, !0x10\n").tokenize().unwrap();
-        let error = Parser::new(&tokens).parse().unwrap_err();
+        let tokens = Tokenizer::new(0, "lim r0, !0x10\n")
+            .tokenize()
+            .into_result()
+            .unwrap();
+        let errors = Parser::new(&tokens).parse().into_result().unwrap_err();
 
-        assert_eq!(error.message, "expected operand");
+        assert_eq!(errors[0].message, "expected operand");
     }
 
     #[test]
     fn parses_alternate_conditions_and_crlf() {
-        let program = parse("bra @overflow, target\r\ntarget:\r\n");
+        let program = parse("bra target, @overflow\r\ntarget:\r\n");
 
         assert!(matches!(
             &program.statements[0],
             Statement::Instruction(instruction)
                 if instruction.operands == vec![
-                    Operand::Condition(Condition::Alternate(AltCondition::Overflow)),
                     Operand::Label("target".to_owned()),
+                    Operand::Condition(Condition::Alternate(AltCondition::Overflow)),
                 ]
         ));
         assert!(matches!(&program.statements[1], Statement::Label(_)));
@@ -665,14 +684,14 @@ mod tests {
 
     #[test]
     fn parses_condition_aliases_and_qualified_labels() {
-        let program = parse("bra ?carry, module.loop\njmp module.exit\n");
+        let program = parse("bra module.loop, ?carry\njmp module.exit\n");
 
         assert!(matches!(
             &program.statements[0],
             Statement::Instruction(instruction)
                 if instruction.operands == vec![
-                    Operand::Condition(Condition::Standard(StdCondition::HigherSame)),
                     Operand::Label("module.loop".to_owned()),
+                    Operand::Condition(Condition::Standard(StdCondition::HigherSame)),
                 ]
         ));
 
@@ -711,9 +730,29 @@ mod tests {
 
     #[test]
     fn rejects_indexed_address_offset_out_of_range() {
-        let tokens = Tokenizer::new(0, "mlx r0, [r1+128]\n").tokenize().unwrap();
-        let error = Parser::new(&tokens).parse().unwrap_err();
+        let tokens = Tokenizer::new(0, "mlx r0, [r1+128]\n")
+            .tokenize()
+            .into_result()
+            .unwrap();
+        let errors = Parser::new(&tokens).parse().into_result().unwrap_err();
 
-        assert_eq!(error.message, "indexed address offset must fit in i8");
+        assert_eq!(errors[0].message, "indexed address offset must fit in i8");
+    }
+
+    #[test]
+    fn recovers_to_next_statement_after_syntax_errors() {
+        let preprocessed = Preprocessor::new()
+            .preprocess(0, "lim r0,\nhalt\nwat [\n")
+            .into_result()
+            .unwrap();
+        let parsed = Parser::new(&preprocessed.tokens).parse();
+
+        assert_eq!(parsed.diagnostics.len(), 2);
+        let program = parsed.value.unwrap();
+        assert_eq!(program.statements.len(), 1);
+        assert!(matches!(
+            &program.statements[0],
+            Statement::Instruction(instruction) if instruction.mnemonic == "halt"
+        ));
     }
 }

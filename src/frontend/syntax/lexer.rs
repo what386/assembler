@@ -1,5 +1,5 @@
 use crate::{
-    diagnostics::{Diagnostic, DiagnosticCode, Span},
+    diagnostics::{Diagnostic, DiagnosticCode, DiagnosticEmitter, Partial, Span},
     frontend::syntax::tokens::{Token, TokenKind},
 };
 
@@ -22,7 +22,9 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    pub fn tokenize(mut self) -> Result<Vec<Token>, Diagnostic> {
+    pub fn tokenize(mut self) -> Partial<Vec<Token>> {
+        let mut emitter = DiagnosticEmitter::new();
+
         while let Some(ch) = self.peek() {
             match ch {
                 ' ' | '\t' => {
@@ -40,27 +42,28 @@ impl<'a> Tokenizer<'a> {
                 '+' => self.single(TokenKind::Plus),
                 '-' => self.single(TokenKind::Minus),
                 '\'' => {
-                    let token = self.lex_char()?;
-                    self.push_token(token);
+                    let token = self.lex_char();
+                    self.push_or_recover(token, &mut emitter);
                 }
                 '"' => {
-                    let token = self.lex_string()?;
-                    self.push_token(token);
+                    let token = self.lex_string();
+                    self.push_or_recover(token, &mut emitter);
                 }
                 '0'..='9' => {
-                    let token = self.lex_integer()?;
-                    self.push_token(token);
+                    let token = self.lex_integer();
+                    self.push_or_recover(token, &mut emitter);
                 }
                 _ if is_identifier_start(ch) => {
                     let token = self.lex_identifier();
                     self.push_token(token);
                 }
                 _ => {
-                    return Err(self.error_at(
+                    emitter.push(self.error_at(
                         DiagnosticCode::UnexpectedCharacter(ch),
                         self.pos,
                         self.pos + ch.len_utf8(),
                     ));
+                    self.recover_line();
                 }
             }
         }
@@ -70,7 +73,7 @@ impl<'a> Tokenizer<'a> {
             span: self.span(self.pos, self.pos),
         });
 
-        Ok(self.tokens)
+        emitter.finish(self.tokens)
     }
 
     fn lex_newline(&mut self) {
@@ -344,6 +347,20 @@ impl<'a> Tokenizer<'a> {
         self.tokens.push(token);
     }
 
+    fn push_or_recover(
+        &mut self,
+        token: Result<Token, Diagnostic>,
+        emitter: &mut DiagnosticEmitter,
+    ) {
+        match token {
+            Ok(token) => self.push_token(token),
+            Err(diagnostic) => {
+                emitter.push(diagnostic);
+                self.recover_line();
+            }
+        }
+    }
+
     fn push(&mut self, kind: TokenKind, start: usize, end: usize) {
         self.tokens.push(Token {
             kind,
@@ -375,6 +392,16 @@ impl<'a> Tokenizer<'a> {
         self.pos += ch.len_utf8();
         Some(ch)
     }
+
+    fn recover_line(&mut self) {
+        while let Some(ch) = self.peek() {
+            if matches!(ch, '\n' | '\r') {
+                self.lex_newline();
+                return;
+            }
+            self.bump();
+        }
+    }
 }
 
 fn is_identifier_start(ch: char) -> bool {
@@ -400,7 +427,10 @@ mod tests {
 
     #[test]
     fn tokenizes_instruction_line() {
-        let tokens = Tokenizer::new(0, "mld r1, [0x10]\n").tokenize().unwrap();
+        let tokens = Tokenizer::new(0, "mld r1, [0x10]\n")
+            .tokenize()
+            .into_result()
+            .unwrap();
         let kinds: Vec<TokenKind> = tokens.into_iter().map(|token| token.kind).collect();
 
         assert_eq!(
@@ -423,7 +453,10 @@ mod tests {
 
     #[test]
     fn tokenizes_char_and_string_literals() {
-        let tokens = Tokenizer::new(0, "'A' \"hi\\n\"").tokenize().unwrap();
+        let tokens = Tokenizer::new(0, "'A' \"hi\\n\"")
+            .tokenize()
+            .into_result()
+            .unwrap();
         let kinds: Vec<TokenKind> = tokens.into_iter().map(|token| token.kind).collect();
 
         assert_eq!(
@@ -441,7 +474,10 @@ mod tests {
 
     #[test]
     fn tokenizes_binary_integer_and_escaped_char() {
-        let tokens = Tokenizer::new(0, "'\\n' 0b1011").tokenize().unwrap();
+        let tokens = Tokenizer::new(0, "'\\n' 0b1011")
+            .tokenize()
+            .into_result()
+            .unwrap();
         let kinds: Vec<TokenKind> = tokens.into_iter().map(|token| token.kind).collect();
 
         assert_eq!(
@@ -462,30 +498,31 @@ mod tests {
 
     #[test]
     fn rejects_invalid_char_literals() {
-        let error = Tokenizer::new(0, "'ab'").tokenize().unwrap_err();
+        let errors = Tokenizer::new(0, "'ab'").tokenize().into_result().unwrap_err();
         assert_eq!(
-            error.message,
+            errors[0].message,
             "character literal must contain exactly one character"
         );
     }
 
     #[test]
     fn rejects_unterminated_character_literal() {
-        let error = Tokenizer::new(0, "'a").tokenize().unwrap_err();
-        assert_eq!(error.message, "unterminated character literal");
+        let errors = Tokenizer::new(0, "'a").tokenize().into_result().unwrap_err();
+        assert_eq!(errors[0].message, "unterminated character literal");
     }
 
     #[test]
     fn rejects_comment_sigil_in_tokenizer_input() {
-        let error = Tokenizer::new(0, "jmp label ; branch\n")
+        let errors = Tokenizer::new(0, "jmp label ; branch\n")
             .tokenize()
+            .into_result()
             .unwrap_err();
-        assert_eq!(error.message, "unexpected character `;`");
+        assert_eq!(errors[0].message, "unexpected character `;`");
     }
 
     #[test]
     fn tokenizes_crlf_as_one_newline() {
-        let tokens = Tokenizer::new(0, "mld\r\n").tokenize().unwrap();
+        let tokens = Tokenizer::new(0, "mld\r\n").tokenize().into_result().unwrap();
         let kinds: Vec<TokenKind> = tokens.into_iter().map(|token| token.kind).collect();
 
         assert_eq!(
@@ -500,32 +537,43 @@ mod tests {
 
     #[test]
     fn rejects_integer_missing_digits_after_prefix() {
-        let error = Tokenizer::new(0, "0x").tokenize().unwrap_err();
+        let errors = Tokenizer::new(0, "0x").tokenize().into_result().unwrap_err();
         assert_eq!(
-            error.message,
+            errors[0].message,
             "expected at least one hexadecimal digit after `0x`"
         );
-        assert_eq!(error.labels[0].span.start, 0);
-        assert_eq!(error.labels[0].span.end, 2);
+        assert_eq!(errors[0].labels[0].span.start, 0);
+        assert_eq!(errors[0].labels[0].span.end, 2);
     }
 
     #[test]
     fn rejects_invalid_integer_suffix() {
-        let error = Tokenizer::new(0, "123abc").tokenize().unwrap_err();
-        assert_eq!(error.message, "invalid integer literal `123a`");
-        assert_eq!(error.labels[0].span.start, 0);
-        assert_eq!(error.labels[0].span.end, 4);
+        let errors = Tokenizer::new(0, "123abc").tokenize().into_result().unwrap_err();
+        assert_eq!(errors[0].message, "invalid integer literal `123a`");
+        assert_eq!(errors[0].labels[0].span.start, 0);
+        assert_eq!(errors[0].labels[0].span.end, 4);
     }
 
     #[test]
     fn rejects_unsupported_escape_sequence() {
-        let error = Tokenizer::new(0, "\"\\q\"").tokenize().unwrap_err();
-        assert_eq!(error.message, "unsupported escape sequence `\\q`");
+        let errors = Tokenizer::new(0, "\"\\q\"").tokenize().into_result().unwrap_err();
+        assert_eq!(errors[0].message, "unsupported escape sequence `\\q`");
     }
 
     #[test]
     fn rejects_unterminated_string_literal() {
-        let error = Tokenizer::new(0, "\"hi").tokenize().unwrap_err();
-        assert_eq!(error.message, "unterminated string literal");
+        let errors = Tokenizer::new(0, "\"hi").tokenize().into_result().unwrap_err();
+        assert_eq!(errors[0].message, "unterminated string literal");
+    }
+
+    #[test]
+    fn recovers_after_multiple_lex_errors() {
+        let tokenized = Tokenizer::new(0, "\"\\q\"\n#\nhalt\n").tokenize();
+
+        assert_eq!(tokenized.diagnostics.len(), 2);
+        let tokens = tokenized.value.unwrap();
+        assert!(tokens.iter().any(|token| {
+            matches!(token.kind, TokenKind::Identifier(ref name) if name == "halt")
+        }));
     }
 }
