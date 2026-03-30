@@ -498,7 +498,10 @@ mod tests {
 
     #[test]
     fn rejects_invalid_char_literals() {
-        let errors = Tokenizer::new(0, "'ab'").tokenize().into_result().unwrap_err();
+        let errors = Tokenizer::new(0, "'ab'")
+            .tokenize()
+            .into_result()
+            .unwrap_err();
         assert_eq!(
             errors[0].message,
             "character literal must contain exactly one character"
@@ -507,7 +510,10 @@ mod tests {
 
     #[test]
     fn rejects_unterminated_character_literal() {
-        let errors = Tokenizer::new(0, "'a").tokenize().into_result().unwrap_err();
+        let errors = Tokenizer::new(0, "'a")
+            .tokenize()
+            .into_result()
+            .unwrap_err();
         assert_eq!(errors[0].message, "unterminated character literal");
     }
 
@@ -522,7 +528,10 @@ mod tests {
 
     #[test]
     fn tokenizes_crlf_as_one_newline() {
-        let tokens = Tokenizer::new(0, "mld\r\n").tokenize().into_result().unwrap();
+        let tokens = Tokenizer::new(0, "mld\r\n")
+            .tokenize()
+            .into_result()
+            .unwrap();
         let kinds: Vec<TokenKind> = tokens.into_iter().map(|token| token.kind).collect();
 
         assert_eq!(
@@ -537,7 +546,10 @@ mod tests {
 
     #[test]
     fn rejects_integer_missing_digits_after_prefix() {
-        let errors = Tokenizer::new(0, "0x").tokenize().into_result().unwrap_err();
+        let errors = Tokenizer::new(0, "0x")
+            .tokenize()
+            .into_result()
+            .unwrap_err();
         assert_eq!(
             errors[0].message,
             "expected at least one hexadecimal digit after `0x`"
@@ -548,7 +560,10 @@ mod tests {
 
     #[test]
     fn rejects_invalid_integer_suffix() {
-        let errors = Tokenizer::new(0, "123abc").tokenize().into_result().unwrap_err();
+        let errors = Tokenizer::new(0, "123abc")
+            .tokenize()
+            .into_result()
+            .unwrap_err();
         assert_eq!(errors[0].message, "invalid integer literal `123a`");
         assert_eq!(errors[0].labels[0].span.start, 0);
         assert_eq!(errors[0].labels[0].span.end, 4);
@@ -556,13 +571,19 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_escape_sequence() {
-        let errors = Tokenizer::new(0, "\"\\q\"").tokenize().into_result().unwrap_err();
+        let errors = Tokenizer::new(0, "\"\\q\"")
+            .tokenize()
+            .into_result()
+            .unwrap_err();
         assert_eq!(errors[0].message, "unsupported escape sequence `\\q`");
     }
 
     #[test]
     fn rejects_unterminated_string_literal() {
-        let errors = Tokenizer::new(0, "\"hi").tokenize().into_result().unwrap_err();
+        let errors = Tokenizer::new(0, "\"hi")
+            .tokenize()
+            .into_result()
+            .unwrap_err();
         assert_eq!(errors[0].message, "unterminated string literal");
     }
 
