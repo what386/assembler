@@ -7,7 +7,7 @@ start:
     mst [0x02], r1
     msx [r3-1], r2
     jmp loop
-    bra done, ?equal
+    bra start, ?not_equal
 
 .page 1
 loop:
@@ -28,13 +28,9 @@ loop:
     bra done, ?equal
 
     lim r7, 0
-    jmp done
-
-.page 2
 done:
     halt
 
-.section data
 
 .org 0xff00
 data:
