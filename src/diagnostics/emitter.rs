@@ -1,4 +1,4 @@
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Partial};
 
 #[derive(Debug, Clone, Default)]
 pub struct DiagnosticEmitter {
@@ -37,5 +37,13 @@ impl DiagnosticEmitter {
 
     pub fn into_diagnostics(self) -> Vec<Diagnostic> {
         self.diagnostics
+    }
+
+    pub fn finish<T>(self, value: T) -> Partial<T> {
+        Partial::with_diagnostics(value, self.diagnostics)
+    }
+
+    pub fn fail<T>(self) -> Partial<T> {
+        Partial::failure(self.diagnostics)
     }
 }

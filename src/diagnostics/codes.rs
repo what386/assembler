@@ -16,6 +16,7 @@ pub enum DiagnosticCode {
     InvalidDirective(String),
     UnknownRegister(String),
     UnknownCondition(String),
+    EncodingError(String),
 }
 
 impl DiagnosticCode {
@@ -27,16 +28,15 @@ impl DiagnosticCode {
             | Self::ExpectedDigits
             | Self::InvalidIntegerLiteral(_)
             | Self::IntegerOutOfRange(_) => "E0002",
-            Self::InvalidCharacterLiteralLength
-            | Self::UnterminatedCharacterLiteral => "E0003",
+            Self::InvalidCharacterLiteralLength | Self::UnterminatedCharacterLiteral => "E0003",
             Self::UnterminatedStringLiteral => "E0004",
-            Self::UnsupportedEscapeSequence(_)
-            | Self::UnterminatedEscapeSequence => "E0005",
+            Self::UnsupportedEscapeSequence(_) | Self::UnterminatedEscapeSequence => "E0005",
             Self::UnexpectedToken(_) => "E0006",
             Self::InvalidOperand(_) => "E0007",
             Self::InvalidDirective(_) => "E0008",
             Self::UnknownRegister(_) => "E0009",
             Self::UnknownCondition(_) => "E0010",
+            Self::EncodingError(_) => "E0011",
         }
     }
 
@@ -67,7 +67,8 @@ impl DiagnosticCode {
             | Self::InvalidOperand(message)
             | Self::InvalidDirective(message)
             | Self::UnknownRegister(message)
-            | Self::UnknownCondition(message) => message.clone(),
+            | Self::UnknownCondition(message)
+            | Self::EncodingError(message) => message.clone(),
         }
     }
 }
