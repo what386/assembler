@@ -38,7 +38,7 @@ impl SymbolTable {
                                 label.span,
                                 format!("`{}` redefined here", label.name),
                             ))
-                            .with_label(DiagnosticLabel::new(
+                            .with_label(DiagnosticLabel::secondary(
                                 existing.span,
                                 format!("previous definition of `{}`", label.name),
                             )),

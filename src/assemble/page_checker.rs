@@ -3,7 +3,9 @@ use crate::{
     diagnostics::{Diagnostic, DiagnosticCode, DiagnosticEmitter, DiagnosticLabel, Partial},
     frontend::{
         analysis::symbol_table::SymbolTable,
-        syntax::statements::{DirectiveArg, DirectiveStatement, Program, Statement},
+        syntax::statements::{
+            DirectiveArg, DirectiveStatement, InstructionStatement, Operand, Program, Statement,
+        },
     },
 };
 
@@ -41,9 +43,13 @@ impl PageChecker {
                     if instruction.mnemonic == "bra" {
                         match resolver.resolve_instruction(instruction, symbols) {
                             Ok(resolved) => {
-                                if let Some(diagnostic) =
-                                    validate_branch_target(instruction_start, &resolved)
-                                {
+                                if let Some(diagnostic) = validate_branch_target(
+                                    program,
+                                    instruction,
+                                    instruction_start,
+                                    &resolved,
+                                    symbols,
+                                ) {
                                     emitter.push(diagnostic);
                                 }
                             }
@@ -147,8 +153,11 @@ impl PageChecker {
 }
 
 fn validate_branch_target(
+    program: &Program,
+    instruction: &InstructionStatement,
     instruction_start: i64,
     resolved: &ResolvedInstruction,
+    symbols: &SymbolTable,
 ) -> Option<Diagnostic> {
     let Some(target) = resolved
         .operands
@@ -169,13 +178,51 @@ fn validate_branch_target(
     }
 
     if instruction_start.div_euclid(PAGE_SIZE_BYTES) != target.div_euclid(PAGE_SIZE_BYTES) {
-        return Some(page_error(
+        let source_page = instruction_start.div_euclid(PAGE_SIZE_BYTES);
+        let mut diagnostic = Diagnostic::error_code(DiagnosticCode::EncodingError(
+            "branch target crosses a 64-instruction page boundary".to_owned(),
+        ))
+        .with_label(DiagnosticLabel::new(
             resolved.span,
-            "branch target crosses a 64-instruction page boundary",
+            format!("branch is in page {source_page}.."),
         ));
+        if let Some(target_label) = branch_target_label(instruction, symbols) {
+            if let Some((page_directive, page_number)) =
+                enclosing_page_directive(program, &target_label.name)
+            {
+                let _ = page_directive;
+                diagnostic.push_label(DiagnosticLabel::secondary(
+                    target_label.span,
+                    format!(
+                        "..but target label `{}` is in page {page_number}",
+                        target_label.name
+                    ),
+                ));
+            } else {
+                let target_page = target.div_euclid(PAGE_SIZE_BYTES);
+                diagnostic.push_label(DiagnosticLabel::secondary(
+                    target_label.span,
+                    format!(
+                        "..but target label `{}` is in page {target_page}",
+                        target_label.name
+                    ),
+                ));
+            }
+        }
+        return Some(diagnostic);
     }
 
     None
+}
+
+fn branch_target_label<'a>(
+    instruction: &InstructionStatement,
+    symbols: &'a SymbolTable,
+) -> Option<&'a crate::frontend::analysis::symbol_table::Symbol> {
+    let Operand::Label(name) = instruction.operands.first()? else {
+        return None;
+    };
+    symbols.get(name)
 }
 
 fn branch_target_byte_address(operand: &ResolvedOperand) -> Option<i64> {
@@ -187,6 +234,34 @@ fn branch_target_byte_address(operand: &ResolvedOperand) -> Option<i64> {
         | ResolvedOperand::Address(ResolvedAddress::Pointer { .. })
         | ResolvedOperand::Condition(_) => None,
     }
+}
+
+fn enclosing_page_directive<'a>(
+    program: &'a Program,
+    target_label: &str,
+) -> Option<(&'a DirectiveStatement, i64)> {
+    let mut current_page = None;
+
+    for statement in &program.statements {
+        match statement {
+            Statement::Directive(directive) if directive.name == "page" => {
+                let Some(page) = directive.args.first() else {
+                    continue;
+                };
+                let page_number = match page {
+                    DirectiveArg::Integer { value, .. } | DirectiveArg::Char { value, .. } => {
+                        *value
+                    }
+                    DirectiveArg::Identifier(_) | DirectiveArg::String(_) => continue,
+                };
+                current_page = Some((directive, page_number));
+            }
+            Statement::Label(label) if label.name == target_label => return current_page,
+            Statement::Label(_) | Statement::Instruction(_) | Statement::Directive(_) => {}
+        }
+    }
+
+    None
 }
 
 fn directive_int(
@@ -259,6 +334,12 @@ mod tests {
         assert_eq!(
             errors[0].message,
             "branch target crosses a 64-instruction page boundary"
+        );
+        assert_eq!(errors[0].labels.len(), 2);
+        assert_eq!(errors[0].labels[0].message, "branch is in page 0..");
+        assert_eq!(
+            errors[0].labels[1].message,
+            "..but target label `done` is in page 1"
         );
     }
 

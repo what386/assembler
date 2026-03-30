@@ -66,7 +66,7 @@ pub fn handle_directive(
                         name_span,
                         format!("`{name}` redefined here"),
                     ))
-                    .with_label(DiagnosticLabel::new(
+                    .with_label(DiagnosticLabel::secondary(
                         previous.span,
                         "previous definition here",
                     )),
@@ -211,7 +211,7 @@ fn expand_token(
                 token.span,
                 format!("`{name}` expands recursively here"),
             ))
-            .with_label(DiagnosticLabel::new(
+            .with_label(DiagnosticLabel::secondary(
                 define.span,
                 "definition involved in recursion",
             )),

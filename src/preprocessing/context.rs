@@ -71,7 +71,7 @@ pub fn unterminated_conditional_diagnostics(
                     "expected `.endif` before end of file"
                 },
             ))
-            .with_label(DiagnosticLabel::new(
+            .with_label(DiagnosticLabel::secondary(
                 frame.start_span,
                 "conditional starts here",
             ))

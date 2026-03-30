@@ -57,9 +57,16 @@ impl Severity {
 }
 
 #[derive(Debug, Clone)]
+pub enum DiagnosticLabelKind {
+    Primary,
+    Secondary,
+}
+
+#[derive(Debug, Clone)]
 pub struct DiagnosticLabel {
     pub span: Span,
     pub message: String,
+    pub kind: DiagnosticLabelKind,
 }
 
 impl DiagnosticLabel {
@@ -67,6 +74,15 @@ impl DiagnosticLabel {
         Self {
             span,
             message: message.into(),
+            kind: DiagnosticLabelKind::Primary,
+        }
+    }
+
+    pub fn secondary(span: Span, message: impl Into<String>) -> Self {
+        Self {
+            span,
+            message: message.into(),
+            kind: DiagnosticLabelKind::Secondary,
         }
     }
 }

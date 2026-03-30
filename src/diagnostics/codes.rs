@@ -22,21 +22,21 @@ pub enum DiagnosticCode {
 impl DiagnosticCode {
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::UnexpectedCharacter(_) => "E0001",
+            Self::UnexpectedCharacter(_) => "E001",
             Self::ExpectedHexDigitsAfterPrefix
             | Self::ExpectedBinaryDigitsAfterPrefix
             | Self::ExpectedDigits
             | Self::InvalidIntegerLiteral(_)
-            | Self::IntegerOutOfRange(_) => "E0002",
-            Self::InvalidCharacterLiteralLength | Self::UnterminatedCharacterLiteral => "E0003",
-            Self::UnterminatedStringLiteral => "E0004",
-            Self::UnsupportedEscapeSequence(_) | Self::UnterminatedEscapeSequence => "E0005",
-            Self::UnexpectedToken(_) => "E0006",
-            Self::InvalidOperand(_) => "E0007",
-            Self::InvalidDirective(_) => "E0008",
-            Self::UnknownRegister(_) => "E0009",
-            Self::UnknownCondition(_) => "E0010",
-            Self::EncodingError(_) => "E0011",
+            | Self::IntegerOutOfRange(_) => "E002",
+            Self::InvalidCharacterLiteralLength | Self::UnterminatedCharacterLiteral => "E003",
+            Self::UnterminatedStringLiteral => "E004",
+            Self::UnsupportedEscapeSequence(_) | Self::UnterminatedEscapeSequence => "E005",
+            Self::UnexpectedToken(_) => "E006",
+            Self::InvalidOperand(_) => "E007",
+            Self::InvalidDirective(_) => "E008",
+            Self::UnknownRegister(_) => "E009",
+            Self::UnknownCondition(_) => "E010",
+            Self::EncodingError(_) => "E011",
         }
     }
 

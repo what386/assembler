@@ -24,10 +24,21 @@ impl Preprocessor {
     }
 
     pub fn preprocess(&self, file_id: FileId, source: &str) -> Partial<PreprocessedSource> {
+        self.preprocess_with_defines(file_id, source, &[])
+    }
+
+    pub fn preprocess_with_defines(
+        &self,
+        file_id: FileId,
+        source: &str,
+        cli_defines: &[(String, String)],
+    ) -> Partial<PreprocessedSource> {
         let mut masked_source = String::with_capacity(source.len());
         let mut defines = Defines::default();
         let mut conditionals = Conditionals::default();
         let mut emitter = DiagnosticEmitter::new();
+
+        emitter.extend(seed_cli_defines(file_id, cli_defines, &mut defines));
 
         iterate_lines(source, |line_start, line, newline| {
             let active_code_end = comment_start(line).unwrap_or(line.len());
@@ -89,6 +100,44 @@ impl Preprocessor {
             tokens,
         })
     }
+}
+
+fn seed_cli_defines(
+    file_id: FileId,
+    cli_defines: &[(String, String)],
+    defines: &mut Defines,
+) -> Vec<crate::diagnostics::Diagnostic> {
+    let mut emitter = DiagnosticEmitter::new();
+
+    for (name, replacement) in cli_defines {
+        let replacement_tokens = Tokenizer::new(file_id, replacement).tokenize();
+        emitter.extend(replacement_tokens.diagnostics);
+        let Some(replacement_tokens) = replacement_tokens.value else {
+            continue;
+        };
+
+        let replacement = replacement_tokens
+            .into_iter()
+            .filter(|token| {
+                !matches!(
+                    token.kind,
+                    crate::frontend::syntax::tokens::TokenKind::Eof
+                        | crate::frontend::syntax::tokens::TokenKind::Newline
+                )
+            })
+            .map(|token| token.kind)
+            .collect();
+
+        defines.insert(
+            name.clone(),
+            crate::preprocessing::context::Define {
+                replacement,
+                span: Span::new(file_id, 0, 0),
+            },
+        );
+    }
+
+    emitter.into_diagnostics()
 }
 
 #[cfg(test)]
