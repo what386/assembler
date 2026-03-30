@@ -247,9 +247,7 @@ fn special_operand_error(
         ("bra", 0, ExpectedOperand::Location) => {
             Some("first branch operand must be a label or address")
         }
-        ("bra", 1, ExpectedOperand::Condition) => {
-            Some("second branch operand must be a condition")
-        }
+        ("bra", 1, ExpectedOperand::Condition) => Some("second branch operand must be a condition"),
         ("jmp" | "cal", 0, ExpectedOperand::Location) => Some("expected label or address operand"),
         _ => None,
     }
@@ -286,40 +284,64 @@ mod tests {
     };
 
     fn parse(source: &str) -> crate::frontend::syntax::statements::Program {
-        let preprocessed = Preprocessor::new().preprocess(0, source).into_result().unwrap();
-        Parser::new(&preprocessed.tokens).parse().into_result().unwrap()
+        let preprocessed = Preprocessor::new()
+            .preprocess(0, source)
+            .into_result()
+            .unwrap();
+        Parser::new(&preprocessed.tokens)
+            .parse()
+            .into_result()
+            .unwrap()
     }
 
     #[test]
     fn validates_known_instructions() {
         let program = parse("start:\nlim r0, 1\nmlx r2, [r3+4]\nbra start, ?equal\n");
-        Validator::new().validate_program(&program).into_result().unwrap();
+        Validator::new()
+            .validate_program(&program)
+            .into_result()
+            .unwrap();
     }
 
     #[test]
     fn validates_alias_and_pseudo_instructions() {
         let program = parse("mov r7, r6, ?always\npeek r2, 4\ncmp r1, r0\ninc r3\n");
-        Validator::new().validate_program(&program).into_result().unwrap();
+        Validator::new()
+            .validate_program(&program)
+            .into_result()
+            .unwrap();
     }
 
     #[test]
     fn validates_func_and_ctrl_leaf_instructions() {
         let program = parse("halt\nnop\nint 3\nmpge 1\ntimer.init 0x10\npcw.set 2\n");
-        Validator::new().validate_program(&program).into_result().unwrap();
+        Validator::new()
+            .validate_program(&program)
+            .into_result()
+            .unwrap();
     }
 
     #[test]
     fn rejects_invalid_branch_shape() {
         let program = parse("bra ?equal, loop\n");
-        let errors = Validator::new().validate_program(&program).into_result().unwrap_err();
+        let errors = Validator::new()
+            .validate_program(&program)
+            .into_result()
+            .unwrap_err();
 
-        assert_eq!(errors[0].message, "first branch operand must be a label or address");
+        assert_eq!(
+            errors[0].message,
+            "first branch operand must be a label or address"
+        );
     }
 
     #[test]
     fn rejects_unknown_instruction() {
         let program = parse("wat r0\n");
-        let errors = Validator::new().validate_program(&program).into_result().unwrap_err();
+        let errors = Validator::new()
+            .validate_program(&program)
+            .into_result()
+            .unwrap_err();
 
         assert_eq!(errors[0].message, "unknown instruction `wat`");
     }
@@ -328,7 +350,10 @@ mod tests {
     fn rejects_raw_family_and_dotted_compat_names() {
         for source in ["func 0\n", "ctrl 0\n", "func.halt\n"] {
             let program = parse(source);
-            let errors = Validator::new().validate_program(&program).into_result().unwrap_err();
+            let errors = Validator::new()
+                .validate_program(&program)
+                .into_result()
+                .unwrap_err();
 
             assert!(errors[0].message.starts_with("unknown instruction `"));
         }
@@ -337,12 +362,21 @@ mod tests {
     #[test]
     fn collects_multiple_validation_errors() {
         let program = parse("wat r0\nbra ?equal, loop\n.org text\n");
-        let errors = Validator::new().validate_program(&program).into_result().unwrap_err();
+        let errors = Validator::new()
+            .validate_program(&program)
+            .into_result()
+            .unwrap_err();
 
         assert_eq!(errors.len(), 4);
-        assert_eq!(errors[0].message, "directive `.org` expected integer argument");
+        assert_eq!(
+            errors[0].message,
+            "directive `.org` expected integer argument"
+        );
         assert_eq!(errors[1].message, "unknown instruction `wat`");
-        assert_eq!(errors[2].message, "first branch operand must be a label or address");
+        assert_eq!(
+            errors[2].message,
+            "first branch operand must be a label or address"
+        );
         assert_eq!(errors[3].message, "expected integer argument");
     }
 }

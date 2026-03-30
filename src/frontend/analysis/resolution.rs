@@ -224,8 +224,14 @@ mod tests {
     };
 
     fn parse(source: &str) -> crate::frontend::syntax::statements::Program {
-        let preprocessed = Preprocessor::new().preprocess(0, source).into_result().unwrap();
-        Parser::new(&preprocessed.tokens).parse().into_result().unwrap()
+        let preprocessed = Preprocessor::new()
+            .preprocess(0, source)
+            .into_result()
+            .unwrap();
+        Parser::new(&preprocessed.tokens)
+            .parse()
+            .into_result()
+            .unwrap()
     }
 
     #[test]

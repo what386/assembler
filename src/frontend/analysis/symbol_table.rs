@@ -29,17 +29,20 @@ impl SymbolTable {
             match statement {
                 Statement::Label(label) => {
                     if let Some(existing) = table.get(&label.name) {
-                        emitter.push(Diagnostic::error_code(DiagnosticCode::InvalidDirective(
-                            format!("duplicate label `{}`", label.name),
-                        ))
-                        .with_label(DiagnosticLabel::new(
-                            label.span,
-                            format!("`{}` redefined here", label.name),
-                        ))
-                        .with_label(DiagnosticLabel::new(
-                            existing.span,
-                            format!("previous definition of `{}`", label.name),
-                        )));
+                        emitter.push(
+                            Diagnostic::error_code(DiagnosticCode::InvalidDirective(format!(
+                                "duplicate label `{}`",
+                                label.name
+                            )))
+                            .with_label(DiagnosticLabel::new(
+                                label.span,
+                                format!("`{}` redefined here", label.name),
+                            ))
+                            .with_label(DiagnosticLabel::new(
+                                existing.span,
+                                format!("previous definition of `{}`", label.name),
+                            )),
+                        );
                         continue;
                     }
 
@@ -69,7 +72,10 @@ impl SymbolTable {
     }
 }
 
-fn apply_directive_location(current: i64, directive: &DirectiveStatement) -> Result<i64, Diagnostic> {
+fn apply_directive_location(
+    current: i64,
+    directive: &DirectiveStatement,
+) -> Result<i64, Diagnostic> {
     match directive.name.as_str() {
         "section" => Ok(current),
         "page" => {
@@ -114,8 +120,14 @@ mod tests {
     };
 
     fn parse(source: &str) -> crate::frontend::syntax::statements::Program {
-        let preprocessed = Preprocessor::new().preprocess(0, source).into_result().unwrap();
-        Parser::new(&preprocessed.tokens).parse().into_result().unwrap()
+        let preprocessed = Preprocessor::new()
+            .preprocess(0, source)
+            .into_result()
+            .unwrap();
+        Parser::new(&preprocessed.tokens)
+            .parse()
+            .into_result()
+            .unwrap()
     }
 
     #[test]

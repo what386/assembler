@@ -149,7 +149,11 @@ fn validate_branch_target(
     instruction_start: i64,
     resolved: &crate::frontend::analysis::resolution::ResolvedInstruction,
 ) -> Option<Diagnostic> {
-    let Some(target) = resolved.operands.first().and_then(branch_target_byte_address) else {
+    let Some(target) = resolved
+        .operands
+        .first()
+        .and_then(branch_target_byte_address)
+    else {
         return Some(page_error(
             resolved.span,
             "branch target must resolve to a byte address",
@@ -194,11 +198,16 @@ fn directive_int(
     emitter: &mut DiagnosticEmitter,
 ) -> Option<i64> {
     match directive.args.get(index) {
-        Some(DirectiveArg::Integer { value, .. } | DirectiveArg::Char { value, .. }) => Some(*value),
+        Some(DirectiveArg::Integer { value, .. } | DirectiveArg::Char { value, .. }) => {
+            Some(*value)
+        }
         _ => {
             emitter.push(page_error(
                 directive.span,
-                format!("directive `.{}` expects an integer argument", directive.name),
+                format!(
+                    "directive `.{}` expects an integer argument",
+                    directive.name
+                ),
             ));
             None
         }
@@ -222,8 +231,14 @@ mod tests {
     };
 
     fn parse(source: &str) -> crate::frontend::syntax::statements::Program {
-        let preprocessed = Preprocessor::new().preprocess(0, source).into_result().unwrap();
-        Parser::new(&preprocessed.tokens).parse().into_result().unwrap()
+        let preprocessed = Preprocessor::new()
+            .preprocess(0, source)
+            .into_result()
+            .unwrap();
+        Parser::new(&preprocessed.tokens)
+            .parse()
+            .into_result()
+            .unwrap()
     }
 
     #[test]
