@@ -2,10 +2,10 @@ use phf::phf_map;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpFormatKind {
-    Register, // 3 bits
-    Condition, // 3 bits
-    Address, // 8 bits
-    Pointer, // 3 bits (just a register)
+    Register,      // 3 bits
+    Condition,     // 3 bits
+    Address,       // 8 bits
+    Pointer,       // 3 bits (just a register)
     OffsetPointer, // 8 bits (3 bit pointer + 5 bit offset)
     Offset { bit_length: u8 },
     Immediate { bit_length: u8 },
