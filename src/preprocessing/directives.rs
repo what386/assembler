@@ -413,6 +413,26 @@ mod tests {
     }
 
     #[test]
+    fn treats_define_names_as_case_sensitive() {
+        let source = ".define VALUE 42\nlim r0, value\n";
+        let processed = Preprocessor::new()
+            .preprocess(0, source)
+            .into_result()
+            .unwrap();
+
+        assert!(processed.tokens.iter().any(|token| matches!(
+            token.kind,
+            TokenKind::Identifier(ref name) if name == "value"
+        )));
+        assert!(
+            !processed
+                .tokens
+                .iter()
+                .any(|token| matches!(token.kind, TokenKind::Integer { value: 42, .. }))
+        );
+    }
+
+    #[test]
     fn rejects_recursive_defines() {
         let source = ".define A B\n.define B A\nlim r0, A\n";
         let errors = Preprocessor::new()
