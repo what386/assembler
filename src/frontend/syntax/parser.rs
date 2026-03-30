@@ -155,9 +155,7 @@ impl<'a> Parser<'a> {
         let (name, end_span) = self.parse_qualified_name()?;
         let condition = self.parse_standard_condition_name(&name).ok_or_else(|| {
             self.error_with_code(
-                DiagnosticCode::UnknownCondition(format!(
-                    "unknown standard condition `{name}`"
-                )),
+                DiagnosticCode::UnknownCondition(format!("unknown standard condition `{name}`")),
                 end_span,
             )
         })?;
@@ -174,9 +172,7 @@ impl<'a> Parser<'a> {
         let (name, end_span) = self.parse_qualified_name()?;
         let condition = self.parse_alternate_condition_name(&name).ok_or_else(|| {
             self.error_with_code(
-                DiagnosticCode::UnknownCondition(format!(
-                    "unknown alternate condition `{name}`"
-                )),
+                DiagnosticCode::UnknownCondition(format!("unknown alternate condition `{name}`")),
                 end_span,
             )
         })?;
@@ -551,7 +547,7 @@ mod tests {
 
     #[test]
     fn parses_labels_and_qualified_mnemonics() {
-        let program = parse("start:\nfunc.halt\n");
+        let program = parse("start:\ntimer.init 0x10\n");
 
         assert_eq!(program.statements.len(), 2);
         assert!(matches!(
@@ -561,7 +557,8 @@ mod tests {
         assert!(matches!(
             &program.statements[1],
             Statement::Instruction(instruction)
-                if instruction.mnemonic == "func.halt" && instruction.operands.is_empty()
+                if instruction.mnemonic == "timer.init"
+                    && instruction.operands == vec![Operand::Immediate(0x10)]
         ));
     }
 
@@ -664,5 +661,59 @@ mod tests {
                 ]
         ));
         assert!(matches!(&program.statements[1], Statement::Label(_)));
+    }
+
+    #[test]
+    fn parses_condition_aliases_and_qualified_labels() {
+        let program = parse("bra ?carry, module.loop\njmp module.exit\n");
+
+        assert!(matches!(
+            &program.statements[0],
+            Statement::Instruction(instruction)
+                if instruction.operands == vec![
+                    Operand::Condition(Condition::Standard(StdCondition::HigherSame)),
+                    Operand::Label("module.loop".to_owned()),
+                ]
+        ));
+
+        assert!(matches!(
+            &program.statements[1],
+            Statement::Instruction(instruction)
+                if instruction.operands == vec![Operand::Label("module.exit".to_owned())]
+        ));
+    }
+
+    #[test]
+    fn parses_signed_absolute_and_indexed_addresses() {
+        let program = parse("mld r1, [+0x20]\nmsx r2, [r3-4]\n");
+
+        assert!(matches!(
+            &program.statements[0],
+            Statement::Instruction(instruction)
+                if instruction.operands == vec![
+                    Operand::Register(Register::R1),
+                    Operand::Address(Address::Absolute(0x20)),
+                ]
+        ));
+
+        assert!(matches!(
+            &program.statements[1],
+            Statement::Instruction(instruction)
+                if instruction.operands == vec![
+                    Operand::Register(Register::R2),
+                    Operand::Address(Address::Indexed {
+                        base: Register::R3,
+                        offset: Some(-4),
+                    }),
+                ]
+        ));
+    }
+
+    #[test]
+    fn rejects_indexed_address_offset_out_of_range() {
+        let tokens = Tokenizer::new(0, "mlx r0, [r1+128]\n").tokenize().unwrap();
+        let error = Parser::new(&tokens).parse().unwrap_err();
+
+        assert_eq!(error.message, "indexed address offset must fit in i8");
     }
 }

@@ -127,9 +127,7 @@ impl<'a> Tokenizer<'a> {
 
         if let Some(suffix_end) = self.invalid_integer_suffix_end() {
             return Err(self.error_at(
-                DiagnosticCode::InvalidIntegerLiteral(
-                    self.source[start..suffix_end].to_owned(),
-                ),
+                DiagnosticCode::InvalidIntegerLiteral(self.source[start..suffix_end].to_owned()),
                 digits_start,
                 suffix_end,
             ));
@@ -357,12 +355,7 @@ impl<'a> Tokenizer<'a> {
         Span::new(self.file_id, start, end)
     }
 
-    fn error_at(
-        &self,
-        code: DiagnosticCode,
-        start: usize,
-        end: usize,
-    ) -> Diagnostic {
+    fn error_at(&self, code: DiagnosticCode, start: usize, end: usize) -> Diagnostic {
         let message = code.message();
         Diagnostic::error_code(code).with_span_label(self.span(start, end), message)
     }
@@ -447,12 +440,39 @@ mod tests {
     }
 
     #[test]
+    fn tokenizes_binary_integer_and_escaped_char() {
+        let tokens = Tokenizer::new(0, "'\\n' 0b1011").tokenize().unwrap();
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|token| token.kind).collect();
+
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Char {
+                    raw: '\n',
+                    value: 10,
+                },
+                TokenKind::Integer {
+                    raw: "0b1011".to_owned(),
+                    value: 11,
+                },
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
     fn rejects_invalid_char_literals() {
         let error = Tokenizer::new(0, "'ab'").tokenize().unwrap_err();
         assert_eq!(
             error.message,
             "character literal must contain exactly one character"
         );
+    }
+
+    #[test]
+    fn rejects_unterminated_character_literal() {
+        let error = Tokenizer::new(0, "'a").tokenize().unwrap_err();
+        assert_eq!(error.message, "unterminated character literal");
     }
 
     #[test]
