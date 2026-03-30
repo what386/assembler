@@ -170,7 +170,6 @@ impl Encoder {
         emitter: &mut DiagnosticEmitter,
     ) {
         match directive.name.as_str() {
-            "section" => {}
             "page" => {
                 align_pages(image, cursor, directive, emitter);
             }
@@ -655,9 +654,8 @@ mod tests {
 
     #[test]
     fn encodes_layout_and_data_directives_into_flat_image() {
-        let program = parse(
-            ".section text\n.page 1\nhalt\n.org 0x0084\n.bytes 0xaa, 'B'\n.zero 2\n.string \"hi\"\n",
-        );
+        let program =
+            parse(".page 1\nhalt\n.org 0x0084\n.bytes 0xaa, 'B'\n.zero 2\n.string \"hi\"\n");
         let image = Encoder::new().assemble(&program).into_result().unwrap();
 
         assert_eq!(image.len(), 0x008a);

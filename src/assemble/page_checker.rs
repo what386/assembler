@@ -60,7 +60,6 @@ impl PageChecker {
                     cursor += 2;
                 }
                 Statement::Directive(directive) => match directive.name.as_str() {
-                    "section" => {}
                     "page" => {
                         let Some(page) = directive_int(directive, 0, &mut emitter) else {
                             continue;
