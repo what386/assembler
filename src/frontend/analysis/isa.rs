@@ -23,7 +23,7 @@ pub enum Bitfield {
     // type of instruction. Set automatically by name table
     Kind(u8), // bit length
     // adds raw data to the output instruction
-    Pad{ data: i32, length: u8 },
+    Pad { data: i32, length: u8 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,16 +33,99 @@ pub struct InstFmt {
     pub bitfields: &'static [Bitfield],
 }
 
-macro_rules! reg  { ($order:expr)            => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OpFormatKind::Register }) }; }
-macro_rules! cond { ($order:expr)            => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OpFormatKind::Condition }) }; }
-macro_rules! addr { ($order:expr)            => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OpFormatKind::Address }) }; }
-macro_rules! ptr  { ($order:expr)            => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OpFormatKind::Pointer }) }; }
-macro_rules! off  { ($order:expr, $len:expr) => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OpFormatKind::Offset { bit_length: $len } }) }; }
-macro_rules! ptroff { ($order:expr)          => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OpFormatKind::OffsetPointer }) }; }
-macro_rules! imm  { ($order:expr, $len:expr) => { Bitfield::Operand(OperandFormat { operand_order: $order, kind: OpFormatKind::Immediate { bit_length: $len } }) }; }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InstructionSpec {
+    pub fmt: &'static InstFmt,
+    pub resolved_mnemonic: &'static str,
+    pub kind: Option<u8>,
+}
 
-macro_rules! kind { ($len:expr) => { Bitfield::Kind($len) }; }
-macro_rules! pad { ($data:expr, $len:expr) => { Bitfield::Pad{data: $data, length: $len} }; }
+impl InstructionSpec {
+    pub fn operand_formats(self) -> Vec<OperandFormat> {
+        let mut operands = self
+            .fmt
+            .bitfields
+            .iter()
+            .filter_map(|bitfield| match bitfield {
+                Bitfield::Operand(operand) => Some(*operand),
+                Bitfield::Kind(_) | Bitfield::Pad { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        operands.sort_by_key(|operand| operand.operand_order);
+        operands
+    }
+}
+
+macro_rules! reg {
+    ($order:expr) => {
+        Bitfield::Operand(OperandFormat {
+            operand_order: $order,
+            kind: OpFormatKind::Register,
+        })
+    };
+}
+macro_rules! cond {
+    ($order:expr) => {
+        Bitfield::Operand(OperandFormat {
+            operand_order: $order,
+            kind: OpFormatKind::Condition,
+        })
+    };
+}
+macro_rules! addr {
+    ($order:expr) => {
+        Bitfield::Operand(OperandFormat {
+            operand_order: $order,
+            kind: OpFormatKind::Address,
+        })
+    };
+}
+macro_rules! ptr {
+    ($order:expr) => {
+        Bitfield::Operand(OperandFormat {
+            operand_order: $order,
+            kind: OpFormatKind::Pointer,
+        })
+    };
+}
+macro_rules! off {
+    ($order:expr, $len:expr) => {
+        Bitfield::Operand(OperandFormat {
+            operand_order: $order,
+            kind: OpFormatKind::Offset { bit_length: $len },
+        })
+    };
+}
+macro_rules! ptroff {
+    ($order:expr) => {
+        Bitfield::Operand(OperandFormat {
+            operand_order: $order,
+            kind: OpFormatKind::OffsetPointer,
+        })
+    };
+}
+macro_rules! imm {
+    ($order:expr, $len:expr) => {
+        Bitfield::Operand(OperandFormat {
+            operand_order: $order,
+            kind: OpFormatKind::Immediate { bit_length: $len },
+        })
+    };
+}
+
+macro_rules! kind {
+    ($len:expr) => {
+        Bitfield::Kind($len)
+    };
+}
+macro_rules! pad {
+    ($data:expr, $len:expr) => {
+        Bitfield::Pad {
+            data: $data,
+            length: $len,
+        }
+    };
+}
 
 macro_rules! inst {
     ($bits:literal, $name:literal, [$($field:expr),* $(,)?]) => {
@@ -52,7 +135,7 @@ macro_rules! inst {
 
 #[rustfmt::skip]
 pub const INSTRUCTION_SET: &[InstFmt] = &[
-    inst!("00000", "func", [kind!(3), pad!(0,8)]),                      // misc functions
+    inst!("00000", "func", [kind!(3), imm!(0,8)]),                      // misc functions
     inst!("00001", "ctrl", [kind!(3), imm!(0,8)]),                      // control commands
     inst!("00010", "in",   [reg!(0),  addr!(1)]),                       // input
     inst!("00011", "out",  [reg!(1),  addr!(0)]),                       // output
@@ -98,6 +181,7 @@ pub const PSEUDO_INSTRUCTION_SET: &[InstFmt] = &[
 pub static INSTRUCTION_ALIASES: phf::Map<&'static str, (&'static str, u8)> = phf_map! {
     "ret"   => ("crets", 0b00),
     "brk"   => ("crets", 0b01),
+    //""   => ("crets", 0b10),
     "iret"  => ("crets", 0b11),
 
     "pop"   => ("pop",  0b00),
@@ -112,6 +196,9 @@ pub static INSTRUCTION_ALIASES: phf::Map<&'static str, (&'static str, u8)> = phf
 
     "mov"   => ("cmov", 0b00),
     "xchg"  => ("cmov", 0b01),
+    //""  => ("cmov", 0b10),
+    //""  => ("cmov", 0b11),
+
 
     "add"   => ("add",  0b00),
     "adc"   => ("add",  0b01),
@@ -152,4 +239,52 @@ pub static INSTRUCTION_ALIASES: phf::Map<&'static str, (&'static str, u8)> = phf
     "clz"   => ("btc",  0b01),
     "ctz"   => ("btc",  0b10),
     "popcnt"=> ("btc",  0b11),
+
+    //NOTE: 0b000 is illegal
+    "halt" => ("func", 0b001),
+    "nop" => ("func", 0b010),
+    //"" => ("func", 0b011),
+    //"" => ("func", 0b100),
+    //"" => ("func", 0b101),
+    "mpge" => ("func", 0b110),
+    "int" => ("func", 0b111),
+
+    "timer.init" => ("ctrl", 0b000),
+    "timer.val" => ("ctrl", 0b001),
+    "pcw.clear" => ("ctrl", 0b010),
+    "pcw.set" => ("ctrl", 0b011),
+    //"" => ("", 0b100),
+    //"" => ("", 0b101),
+    //"" => ("", 0b110),
+    //"" => ("", 0b111),
 };
+
+pub fn lookup_instruction(mnemonic: &str) -> Option<InstructionSpec> {
+    if let Some((resolved_mnemonic, kind)) = INSTRUCTION_ALIASES.get(mnemonic) {
+        let fmt = instruction_format(INSTRUCTION_SET, resolved_mnemonic)?;
+        return Some(InstructionSpec {
+            fmt,
+            resolved_mnemonic,
+            kind: Some(*kind),
+        });
+    }
+
+    if let Some(fmt) = instruction_format(INSTRUCTION_SET, mnemonic) {
+        return Some(InstructionSpec {
+            fmt,
+            resolved_mnemonic: fmt.mnemonic,
+            kind: None,
+        });
+    }
+
+    let fmt = instruction_format(PSEUDO_INSTRUCTION_SET, mnemonic)?;
+    Some(InstructionSpec {
+        fmt,
+        resolved_mnemonic: fmt.mnemonic,
+        kind: None,
+    })
+}
+
+fn instruction_format<'a>(set: &'a [InstFmt], mnemonic: &str) -> Option<&'a InstFmt> {
+    set.iter().find(|fmt| fmt.mnemonic == mnemonic)
+}
