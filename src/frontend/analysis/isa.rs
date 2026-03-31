@@ -270,13 +270,14 @@ pub fn lookup_instruction(mnemonic: &str) -> Option<InstructionSpec> {
     }
 
     if !matches!(mnemonic, "func" | "ctrl")
-        && let Some(fmt) = instruction_format(INSTRUCTION_SET, mnemonic) {
-            return Some(InstructionSpec {
-                fmt,
-                resolved_mnemonic: fmt.mnemonic,
-                kind: None,
-            });
-        }
+        && let Some(fmt) = instruction_format(INSTRUCTION_SET, mnemonic)
+    {
+        return Some(InstructionSpec {
+            fmt,
+            resolved_mnemonic: fmt.mnemonic,
+            kind: None,
+        });
+    }
 
     let fmt = instruction_format(PSEUDO_INSTRUCTION_SET, mnemonic)?;
     Some(InstructionSpec {
