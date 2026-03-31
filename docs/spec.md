@@ -202,9 +202,9 @@ An assembler directive begins with `.` followed by a qualified name:
 
 Directive argument parsing rules:
 
-- `.bytes` uses comma-separated arguments
+- `.bytes` and `.fill` use comma-separated arguments
 - all other directives use positional whitespace-separated arguments
-- commas in non-`.bytes` directives are errors
+- commas in non-`.bytes`/non-`.fill` directives are errors
 
 ## Operands
 
@@ -369,18 +369,30 @@ Rules:
 
 `.string` emits the raw bytes of the string literal. No terminator is added.
 
-### `.zero <count>`
+### `.cstring "text"`
 
 ```asm
-.zero 16
+.cstring "text"
 ```
 
-`.zero` emits `count` zero bytes.
+`.cstring` emits the raw bytes of the string literal followed by one trailing
+`0x00`.
+
+### `.fill <count>, <value>`
+
+```asm
+.fill 16, 0x00
+.fill 4, 'A'
+```
+
+`.fill` emits `count` copies of `value`.
 
 Rules:
 
 - `count` must be an integer or character literal
 - `count` must be non-negative
+- `value` must be an integer or character literal
+- `value` must fit in 8 bits
 
 ## Instruction Set Surface
 
@@ -396,11 +408,11 @@ shapes are described informally; validation is enforced by the assembler.
 | `jmp` | `jmp location` |
 | `bra` | `bra location, condition` |
 | `cal` | `cal location` |
-| `crets` | `crets condition, imm` |
+| `crets` | `crets imm, condition` |
 | `blit` | `blit [reg], [reg]` |
 | `bit` | `bit reg, reg, imm` |
-| `pop` | `pop reg, imm` |
-| `psh` | `psh reg, imm` |
+| `pop` | `pop reg` or `pop reg, imm` |
+| `psh` | `psh reg` or `psh reg, imm` |
 | `mld` | `mld reg, [abs]` |
 | `mst` | `mst [abs], reg` |
 | `mlx` | `mlx reg, [reg+off]` |
@@ -441,6 +453,7 @@ These mnemonics are accepted directly:
 These mnemonics are accepted and resolve to canonical instruction forms:
 
 - return / trap aliases: `ret`, `brk`, `iret`
+  `ret` also accepts a zero-operand short form
 - stack aliases: `peek`, `popf`, `dsp`, `poke`, `pshf`, `isp`
 - move / exchange aliases: `mov`, `xchg`
 - arithmetic aliases: `adc`, `adv`, `advc`, `sbb`, `sbv`, `sbvb`
