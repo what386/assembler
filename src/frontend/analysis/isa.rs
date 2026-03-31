@@ -35,25 +35,25 @@ pub struct InstFmt {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InstructionSpec {
-    pub fmt: &'static InstFmt,
+    pub bits: &'static str,
+    pub bitfields: &'static [Bitfield],
     pub resolved_mnemonic: &'static str,
     pub kind: Option<u8>,
 }
 
 impl InstructionSpec {
     pub fn operand_formats(self) -> Vec<OperandFormat> {
-        let mut operands = self
-            .fmt
-            .bitfields
-            .iter()
-            .filter_map(|bitfield| match bitfield {
-                Bitfield::Operand(operand) => Some(*operand),
-                Bitfield::Kind(_) | Bitfield::Pad { .. } => None,
-            })
-            .collect::<Vec<_>>();
+        let mut operands = operand_formats_for_bitfields(self.bitfields);
         operands.sort_by_key(|operand| operand.operand_order);
         operands
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InstOverload {
+    pub mnemonic: &'static str,
+    pub resolved_mnemonic: &'static str,
+    pub bitfields: &'static [Bitfield],
 }
 
 macro_rules! reg {
@@ -133,6 +133,23 @@ macro_rules! inst {
     };
 }
 
+macro_rules! overload {
+    ($name:literal, [$($field:expr),* $(,)?]) => {
+        InstOverload {
+            mnemonic: $name,
+            resolved_mnemonic: $name,
+            bitfields: &[$($field),*],
+        }
+    };
+    ($name:literal => $resolved:literal, [$($field:expr),* $(,)?]) => {
+        InstOverload {
+            mnemonic: $name,
+            resolved_mnemonic: $resolved,
+            bitfields: &[$($field),*],
+        }
+    };
+}
+
 #[rustfmt::skip]
 pub const INSTRUCTION_SET: &[InstFmt] = &[
     inst!("00000", "func", [kind!(3), imm!(0,8)]),                      // misc functions
@@ -170,7 +187,15 @@ pub const INSTRUCTION_SET: &[InstFmt] = &[
 ];
 
 #[rustfmt::skip]
-pub const PSEUDO_INSTRUCTION_SET: &[InstFmt] = &[
+pub const INSTRUCTION_OVERLOADS: &[InstOverload] = &[
+    overload!("pop",  [reg!(0),  kind!(2), pad!(0,6)]),            // pop stack without offset
+    overload!("psh",  [reg!(0),  kind!(2), pad!(0,6)]),            // push stack without offset
+    overload!("ret" => "crets", [pad!(0b111,3), kind!(2), pad!(0,6)]), // return shorthand
+    overload!("ret" => "crets", [cond!(0), kind!(2), pad!(0,6)]),      // conditional return shorthand
+];
+
+#[rustfmt::skip]
+pub const PSEUDO_INSTRUCTIONS: &[InstFmt] = &[
     inst!("00101", "brx",   [cond!(0), kind!(2), pad!(0,3), ptr!(1)]), // branch indexed -> branch
     inst!("11001", "cmp",  [pad!(0,3),  reg!(0), pad!(0,2), reg!(1)]), // compare -> subtraction
     inst!("11011", "not", [reg!(0), reg!(1), pad!(1,2), pad!(0, 3)]),  // NOT -> inverse bitwise
@@ -259,11 +284,26 @@ pub static INSTRUCTION_ALIASES: phf::Map<&'static str, (&'static str, u8)> = phf
     //"" => ("", 0b111),
 };
 
-pub fn lookup_instruction(mnemonic: &str) -> Option<InstructionSpec> {
+pub fn lookup_instruction(mnemonic: &str, operand_count: usize) -> Option<InstructionSpec> {
+    if let Some(overload) = instruction_overload(mnemonic, operand_count) {
+        let bits = instruction_format(INSTRUCTION_SET, overload.resolved_mnemonic)?.bits;
+        let kind = INSTRUCTION_ALIASES.get(mnemonic).map(|(_, kind)| *kind);
+        return Some(InstructionSpec {
+            bits,
+            bitfields: overload.bitfields,
+            resolved_mnemonic: overload.resolved_mnemonic,
+            kind,
+        });
+    }
+
     if let Some((resolved_mnemonic, kind)) = INSTRUCTION_ALIASES.get(mnemonic) {
         let fmt = instruction_format(INSTRUCTION_SET, resolved_mnemonic)?;
+        if operand_count != operand_formats_for_bitfields(fmt.bitfields).len() {
+            return None;
+        }
         return Some(InstructionSpec {
-            fmt,
+            bits: fmt.bits,
+            bitfields: fmt.bitfields,
             resolved_mnemonic,
             kind: Some(*kind),
         });
@@ -271,22 +311,47 @@ pub fn lookup_instruction(mnemonic: &str) -> Option<InstructionSpec> {
 
     if !matches!(mnemonic, "func" | "ctrl")
         && let Some(fmt) = instruction_format(INSTRUCTION_SET, mnemonic)
+        && operand_count == operand_formats_for_bitfields(fmt.bitfields).len()
     {
         return Some(InstructionSpec {
-            fmt,
+            bits: fmt.bits,
+            bitfields: fmt.bitfields,
             resolved_mnemonic: fmt.mnemonic,
             kind: None,
         });
     }
 
-    let fmt = instruction_format(PSEUDO_INSTRUCTION_SET, mnemonic)?;
+    let fmt = instruction_format(PSEUDO_INSTRUCTIONS, mnemonic)?;
+    if operand_count != operand_formats_for_bitfields(fmt.bitfields).len() {
+        return None;
+    }
     Some(InstructionSpec {
-        fmt,
+        bits: fmt.bits,
+        bitfields: fmt.bitfields,
         resolved_mnemonic: fmt.mnemonic,
         kind: None,
     })
 }
 
+fn instruction_overload(mnemonic: &str, operand_count: usize) -> Option<&'static InstOverload> {
+    INSTRUCTION_OVERLOADS
+        .iter()
+        .find(|overload| {
+            overload.mnemonic == mnemonic
+                && operand_formats_for_bitfields(overload.bitfields).len() == operand_count
+        })
+}
+
 fn instruction_format<'a>(set: &'a [InstFmt], mnemonic: &str) -> Option<&'a InstFmt> {
     set.iter().find(|fmt| fmt.mnemonic == mnemonic)
+}
+
+fn operand_formats_for_bitfields(bitfields: &[Bitfield]) -> Vec<OperandFormat> {
+    bitfields
+        .iter()
+        .filter_map(|bitfield| match bitfield {
+            Bitfield::Operand(operand) => Some(*operand),
+            Bitfield::Kind(_) | Bitfield::Pad { .. } => None,
+        })
+        .collect()
 }
