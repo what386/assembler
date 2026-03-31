@@ -381,11 +381,7 @@ impl<'a> Parser<'a> {
         let start = self.current_span();
         let negative = if self.matches(|kind| matches!(kind, TokenKind::Plus)) {
             false
-        } else if self.matches(|kind| matches!(kind, TokenKind::Minus)) {
-            true
-        } else {
-            false
-        };
+        } else { self.matches(|kind| matches!(kind, TokenKind::Minus)) };
 
         let (value, end_span, raw) = match self.current_kind() {
             TokenKind::Integer { raw, value } => (*value, self.current_span(), raw.clone()),

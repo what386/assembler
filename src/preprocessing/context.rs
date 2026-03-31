@@ -44,7 +44,7 @@ pub fn current_active(conditionals: &[ConditionalFrame]) -> bool {
     conditionals
         .last()
         .copied()
-        .map_or(true, ConditionalFrame::is_active)
+        .is_none_or(ConditionalFrame::is_active)
 }
 
 pub fn directive_error(span: Span, message: impl Into<String>) -> Diagnostic {

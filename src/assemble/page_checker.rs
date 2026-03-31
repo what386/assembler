@@ -31,14 +31,13 @@ impl PageChecker {
                 Statement::Instruction(instruction) => {
                     let instruction_start = cursor;
 
-                    if let Some(page_start) = current_page_start {
-                        if instruction_start + 2 > page_start + PAGE_SIZE_BYTES {
+                    if let Some(page_start) = current_page_start
+                        && instruction_start + 2 > page_start + PAGE_SIZE_BYTES {
                             emitter.push(page_error(
                                 instruction.span,
                                 "instruction exceeds the 64-instruction page",
                             ));
                         }
-                    }
 
                     if instruction.mnemonic == "bra" {
                         match resolver.resolve_instruction(instruction, symbols) {
