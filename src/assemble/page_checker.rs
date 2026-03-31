@@ -1,6 +1,11 @@
 use crate::{
     assemble::resolution::{ResolvedAddress, ResolvedInstruction, ResolvedOperand, Resolver},
     diagnostics::{Diagnostic, DiagnosticCode, DiagnosticEmitter, DiagnosticLabel, Partial},
+    directives::{
+        data::directive_data_len,
+        incbin::{IncbinContext, incbin_length},
+        layout::{apply_layout_directive, page_error},
+    },
     frontend::{
         analysis::symbol_table::SymbolTable,
         syntax::statements::{
@@ -12,11 +17,17 @@ use crate::{
 const PAGE_SIZE_BYTES: i64 = 128;
 
 #[derive(Debug, Clone, Default)]
-pub struct PageChecker;
+pub struct PageChecker {
+    incbin: IncbinContext,
+}
 
 impl PageChecker {
     pub fn new() -> Self {
-        Self
+        Self::with_context(IncbinContext::default())
+    }
+
+    pub fn with_context(incbin: IncbinContext) -> Self {
+        Self { incbin }
     }
 
     pub fn analyze(&self, program: &Program, symbols: &SymbolTable) -> Partial<()> {
@@ -59,113 +70,56 @@ impl PageChecker {
 
                     cursor += 2;
                 }
-                Statement::Directive(directive) => match directive.name.as_str() {
-                    "page" => {
-                        let Some(page) = directive_int(directive, 0, &mut emitter) else {
-                            continue;
-                        };
-                        if page < 0 {
-                            emitter.push(page_error(
-                                directive.span,
-                                "directive `.page` expects a non-negative page number",
-                            ));
-                            continue;
-                        }
+                Statement::Directive(directive) => {
+                    if let Some(next) =
+                        apply_layout_directive(directive, cursor, &mut current_page_start, &mut emitter)
+                    {
+                        cursor = next;
+                        continue;
+                    }
 
-                        cursor = page << 7;
-                        current_page_start = Some(cursor);
-                    }
-                    "org" => {
-                        let Some(target) = directive_int(directive, 0, &mut emitter) else {
-                            continue;
-                        };
-                        if target < 0 {
-                            emitter.push(page_error(
-                                directive.span,
-                                "directive `.org` expects a non-negative address",
-                            ));
-                            continue;
+                    if let Some(length) = directive_data_len(directive) {
+                        match length {
+                            Ok(length) => {
+                                if let Some(page_start) = current_page_start {
+                                    let next = cursor + length;
+                                    if next > page_start + PAGE_SIZE_BYTES {
+                                        emitter.push(page_error(
+                                            directive.span,
+                                            format!("directive `.{}` exceeds the current page", directive.name),
+                                        ));
+                                    }
+                                }
+                                cursor += length;
+                            }
+                            Err(diagnostic) => emitter.push(page_error(directive.span, diagnostic.message)),
                         }
+                        continue;
+                    }
 
-                        cursor = target;
-                        current_page_start = None;
-                    }
-                    "bytes" => {
-                        if let Some(page_start) = current_page_start {
-                            let next = cursor + directive.args.len() as i64;
-                            if next > page_start + PAGE_SIZE_BYTES {
-                                emitter.push(page_error(
-                                    directive.span,
-                                    "directive `.bytes` exceeds the current page",
-                                ));
-                            }
-                        }
-                        cursor += directive.args.len() as i64;
-                    }
-                    "fill" => {
-                        let Some(count) = directive_int(directive, 0, &mut emitter) else {
-                            continue;
-                        };
-                        if count < 0 {
-                            emitter.push(page_error(
-                                directive.span,
-                                "directive `.fill` expects a non-negative count",
-                            ));
-                            continue;
-                        }
-                        if let Some(page_start) = current_page_start {
-                            let next = cursor + count;
-                            if next > page_start + PAGE_SIZE_BYTES {
-                                emitter.push(page_error(
-                                    directive.span,
-                                    "directive `.fill` exceeds the current page",
-                                ));
-                            }
-                        }
-                        cursor += count;
-                    }
-                    "string" => match directive.args.first() {
-                        Some(DirectiveArg::String(value)) => {
-                            if let Some(page_start) = current_page_start {
-                                let next = cursor + value.len() as i64;
-                                if next > page_start + PAGE_SIZE_BYTES {
-                                    emitter.push(page_error(
-                                        directive.span,
-                                        "directive `.string` exceeds the current page",
-                                    ));
+                    match directive.name.as_str() {
+                        "incbin" => match incbin_length(directive, &self.incbin) {
+                            Ok(length) => {
+                                if let Some(page_start) = current_page_start {
+                                    let next = cursor + length;
+                                    if next > page_start + PAGE_SIZE_BYTES {
+                                        emitter.push(page_error(
+                                            directive.span,
+                                            "directive `.incbin` exceeds the current page",
+                                        ));
+                                    }
                                 }
+                                cursor += length;
                             }
-                            cursor += value.len() as i64;
-                        }
-                        _ => emitter.push(page_error(
+                            Err(diagnostic) => emitter.push(diagnostic),
+                        },
+                        "zero" => emitter.push(page_error(
                             directive.span,
-                            "directive `.string` expects a string argument",
+                            "directive `.zero` is no longer supported",
                         )),
-                    },
-                    "cstring" => match directive.args.first() {
-                        Some(DirectiveArg::String(value)) => {
-                            if let Some(page_start) = current_page_start {
-                                let next = cursor + value.len() as i64 + 1;
-                                if next > page_start + PAGE_SIZE_BYTES {
-                                    emitter.push(page_error(
-                                        directive.span,
-                                        "directive `.cstring` exceeds the current page",
-                                    ));
-                                }
-                            }
-                            cursor += value.len() as i64 + 1;
-                        }
-                        _ => emitter.push(page_error(
-                            directive.span,
-                            "directive `.cstring` expects a string argument",
-                        )),
-                    },
-                    "zero" => emitter.push(page_error(
-                        directive.span,
-                        "directive `.zero` is no longer supported",
-                    )),
-                    _ => {}
-                },
+                        _ => {}
+                    }
+                }
             }
         }
 
@@ -285,38 +239,13 @@ fn enclosing_page_directive<'a>(
     None
 }
 
-fn directive_int(
-    directive: &DirectiveStatement,
-    index: usize,
-    emitter: &mut DiagnosticEmitter,
-) -> Option<i64> {
-    match directive.args.get(index) {
-        Some(DirectiveArg::Integer { value, .. } | DirectiveArg::Char { value, .. }) => {
-            Some(*value)
-        }
-        _ => {
-            emitter.push(page_error(
-                directive.span,
-                format!(
-                    "directive `.{}` expects an integer argument",
-                    directive.name
-                ),
-            ));
-            None
-        }
-    }
-}
-
-fn page_error(span: crate::diagnostics::Span, message: impl Into<String>) -> Diagnostic {
-    let message = message.into();
-    Diagnostic::error_code(DiagnosticCode::EncodingError(message.clone()))
-        .with_label(DiagnosticLabel::new(span, message))
-}
-
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+
     use crate::{
         assemble::page_checker::PageChecker,
+        directives::incbin::IncbinContext,
         frontend::{analysis::symbol_table::SymbolTable, syntax::parser::Parser},
         preprocessing::Preprocessor,
     };
@@ -330,6 +259,16 @@ mod tests {
             .parse()
             .into_result()
             .unwrap()
+    }
+
+    fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("assembler-{name}-{unique}.bin"));
+        fs::write(&path, bytes).unwrap();
+        path
     }
 
     #[test]
@@ -382,5 +321,23 @@ mod tests {
             errors[0].message,
             "instruction exceeds the 64-instruction page"
         );
+    }
+
+    #[test]
+    fn rejects_incbin_that_exceeds_current_page() {
+        let path = temp_file("page-checker", &[0; 129]);
+        let source = format!(".page 0\n.incbin \"{}\"\n", path.display());
+        let program = parse(&source);
+        let symbols = SymbolTable::build_with_context(&program, &IncbinContext::default())
+            .into_result()
+            .unwrap();
+        let errors = PageChecker::with_context(IncbinContext::default())
+            .analyze(&program, &symbols)
+            .into_result()
+            .unwrap_err();
+
+        assert_eq!(errors[0].message, "directive `.incbin` exceeds the current page");
+
+        let _ = fs::remove_file(path);
     }
 }

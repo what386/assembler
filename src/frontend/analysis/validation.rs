@@ -1,12 +1,13 @@
 use crate::{
     diagnostics::{Diagnostic, DiagnosticCode, DiagnosticEmitter, DiagnosticLabel, Partial},
+    directives::{data::validate_data_directive, incbin::validate_incbin, layout::validate_layout_directive},
     frontend::{
         analysis::{
             isa::{InstructionSpec, OpFormatKind, lookup_instruction},
             symbol_table::SymbolTable,
         },
         syntax::statements::{
-            Address, DirectiveArg, DirectiveStatement, InstructionStatement, Operand, Program,
+            Address, DirectiveStatement, InstructionStatement, Operand, Program,
             Statement,
         },
     },
@@ -32,7 +33,7 @@ impl Validator {
 
     pub fn validate_program(&self, program: &Program) -> Partial<()> {
         let mut emitter = DiagnosticEmitter::new();
-        emitter.extend(SymbolTable::build(program).diagnostics);
+        emitter.extend(SymbolTable::build_for_validation(program).diagnostics);
 
         for statement in &program.statements {
             match statement {
@@ -70,62 +71,16 @@ impl Validator {
     }
 
     fn validate_directive(&self, directive: &DirectiveStatement) -> Result<(), Diagnostic> {
-        match directive.name.as_str() {
-            "page" | "org" => {
-                if matches!(
-                    directive.args.first(),
-                    Some(DirectiveArg::Integer { .. } | DirectiveArg::Char { .. })
-                ) {
-                    Ok(())
-                } else {
-                    Err(self.directive_error(directive, "expected integer argument"))
-                }
-            }
-            "string" | "cstring" => {
-                if matches!(directive.args.first(), Some(DirectiveArg::String(_))) {
-                    Ok(())
-                } else {
-                    Err(self.directive_error(directive, "expected string argument"))
-                }
-            }
-            "fill" => {
-                if directive.args.len() != 2 {
-                    return Err(self.directive_error(directive, "expected count and fill value"));
-                }
-
-                if !matches!(
-                    directive.args.first(),
-                    Some(DirectiveArg::Integer { .. } | DirectiveArg::Char { .. })
-                ) {
-                    return Err(self.directive_error(directive, "expected integer count"));
-                }
-
-                if matches!(
-                    directive.args.get(1),
-                    Some(DirectiveArg::Integer { .. } | DirectiveArg::Char { .. })
-                ) {
-                    Ok(())
-                } else {
-                    Err(self.directive_error(
-                        directive,
-                        "expected integer or char fill value",
-                    ))
-                }
-            }
-            "bytes" => {
-                if directive.args.iter().all(|arg| {
-                    matches!(
-                        arg,
-                        DirectiveArg::Integer { .. } | DirectiveArg::Char { .. }
-                    )
-                }) {
-                    Ok(())
-                } else {
-                    Err(self.directive_error(directive, "expected only byte-sized literals"))
-                }
-            }
-            _ => Ok(()),
+        if let Some(result) = validate_layout_directive(directive) {
+            return result;
         }
+        if let Some(result) = validate_data_directive(directive) {
+            return result;
+        }
+        if directive.name == "incbin" {
+            return validate_incbin(directive);
+        }
+        Ok(())
     }
 
     fn expect_instruction_shape(
@@ -182,16 +137,6 @@ impl Validator {
         let message = message.into();
         Diagnostic::error_code(DiagnosticCode::InvalidOperand(message.clone()))
             .with_label(DiagnosticLabel::new(instruction.span, message))
-    }
-
-    fn directive_error(
-        &self,
-        directive: &DirectiveStatement,
-        message: impl Into<String>,
-    ) -> Diagnostic {
-        let message = message.into();
-        Diagnostic::error_code(DiagnosticCode::InvalidDirective(message.clone()))
-            .with_label(DiagnosticLabel::new(directive.span, message))
     }
 }
 
@@ -419,6 +364,28 @@ mod tests {
                 .unwrap_err();
 
             assert!(errors[0].message.starts_with("unknown instruction `"));
+        }
+    }
+
+    #[test]
+    fn validates_incbin_directive_shape() {
+        let program = parse(".incbin \"data.bin\"\n");
+        Validator::new()
+            .validate_program(&program)
+            .into_result()
+            .unwrap();
+    }
+
+    #[test]
+    fn rejects_invalid_incbin_directive_shape() {
+        for source in [".incbin\n", ".incbin 12\n", ".incbin \"a.bin\" extra\n"] {
+            let program = parse(source);
+            let errors = Validator::new()
+                .validate_program(&program)
+                .into_result()
+                .unwrap_err();
+
+            assert_eq!(errors[0].message, "expected string path argument");
         }
     }
 }

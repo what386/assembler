@@ -4,6 +4,10 @@ use crate::assemble::resolution::{
 use crate::{
     assemble::encodings::encode_condition,
     diagnostics::{Diagnostic, DiagnosticCode, DiagnosticEmitter, DiagnosticLabel, Partial, Span},
+    directives::{
+        data::encode_data_directive,
+        incbin::{IncbinContext, incbin_bytes},
+    },
     frontend::{
         analysis::{isa::{Bitfield, OpFormatKind}, symbol_table::SymbolTable},
         syntax::statements::{DirectiveArg, DirectiveStatement, Program, Statement},
@@ -14,18 +18,30 @@ const PAGE_SIZE_BYTES: i64 = 128;
 const INSTRUCTION_SIZE_BYTES: i64 = 2;
 
 #[derive(Debug, Clone, Default)]
-pub struct Encoder;
+pub struct Encoder {
+    incbin: IncbinContext,
+}
 
 impl Encoder {
     pub fn new() -> Self {
-        Self
+        Self::with_context(IncbinContext::default())
+    }
+
+    pub fn with_context(incbin: IncbinContext) -> Self {
+        Self { incbin }
     }
 
     pub fn assemble(&self, program: &Program) -> Partial<Vec<u8>> {
         let mut emitter = DiagnosticEmitter::new();
-        let symbols = SymbolTable::build(program);
+        let symbols = SymbolTable::build_with_context(program, &self.incbin);
+        let symbol_errors = !symbols.diagnostics.is_empty();
         emitter.extend(symbols.diagnostics);
-        let symbols = symbols.value.unwrap_or_default();
+        let Some(symbols) = symbols.value else {
+            return emitter.fail();
+        };
+        if symbol_errors {
+            return emitter.fail();
+        }
 
         let resolver = Resolver::new();
         let mut image = Vec::new();
@@ -156,6 +172,10 @@ impl Encoder {
         cursor: &mut usize,
         emitter: &mut DiagnosticEmitter,
     ) {
+        if encode_data_directive(directive, image, cursor, emitter) {
+            return;
+        }
+
         match directive.name.as_str() {
             "page" => {
                 align_pages(image, cursor, directive, emitter);
@@ -165,95 +185,14 @@ impl Encoder {
                     seek(image, cursor, target, directive, emitter);
                 }
             }
-            "bytes" => {
-                for arg in &directive.args {
-                    let Some(value) = literal_value(arg) else {
-                        emitter.push(encoding_error(
-                            directive.span,
-                            "directive `.bytes` expects integer or char arguments",
-                        ));
-                        continue;
-                    };
-
-                    let Ok(byte) = encode_unsigned_value(
-                        value,
-                        8,
-                        directive.span,
-                        "byte literal does not fit in 8 bits",
-                    ) else {
-                        emitter.push(encoding_error(
-                            directive.span,
-                            "byte literal does not fit in 8 bits",
-                        ));
-                        continue;
-                    };
-                    write_byte(image, *cursor, byte as u8);
-                    *cursor += 1;
-                }
-            }
-            "fill" => {
-                let Some(count) = directive_int(directive, 0, emitter) else {
-                    return;
-                };
-                if count < 0 {
-                    emitter.push(encoding_error(
-                        directive.span,
-                        "directive `.fill` expects a non-negative count",
-                    ));
-                    return;
-                }
-
-                let Some(value) = directive.args.get(1).and_then(literal_value) else {
-                    emitter.push(encoding_error(
-                        directive.span,
-                        "directive `.fill` expects an integer or char fill value",
-                    ));
-                    return;
-                };
-
-                let Ok(byte) = encode_unsigned_value(
-                    value,
-                    8,
-                    directive.span,
-                    "fill value does not fit in 8 bits",
-                ) else {
-                    emitter.push(encoding_error(
-                        directive.span,
-                        "fill value does not fit in 8 bits",
-                    ));
-                    return;
-                };
-
-                for _ in 0..count as usize {
-                    write_byte(image, *cursor, byte as u8);
-                    *cursor += 1;
-                }
-            }
-            "string" => match directive.args.first() {
-                Some(DirectiveArg::String(value)) => {
-                    for byte in value.bytes() {
+            "incbin" => match incbin_bytes(directive, &self.incbin) {
+                Ok(bytes) => {
+                    for byte in bytes {
                         write_byte(image, *cursor, byte);
                         *cursor += 1;
                     }
                 }
-                _ => emitter.push(encoding_error(
-                    directive.span,
-                    "directive `.string` expects a string argument",
-                )),
-            },
-            "cstring" => match directive.args.first() {
-                Some(DirectiveArg::String(value)) => {
-                    for byte in value.bytes() {
-                        write_byte(image, *cursor, byte);
-                        *cursor += 1;
-                    }
-                    write_byte(image, *cursor, 0);
-                    *cursor += 1;
-                }
-                _ => emitter.push(encoding_error(
-                    directive.span,
-                    "directive `.cstring` expects a string argument",
-                )),
+                Err(diagnostic) => emitter.push(diagnostic),
             },
             other => emitter.push(encoding_error(
                 directive.span,
@@ -518,26 +457,6 @@ fn encode_signed_value(
     Ok((value & mask) as u32)
 }
 
-fn directive_int(
-    directive: &DirectiveStatement,
-    index: usize,
-    emitter: &mut DiagnosticEmitter,
-) -> Option<i64> {
-    match directive.args.get(index).and_then(literal_value) {
-        Some(value) => Some(value),
-        None => {
-            emitter.push(encoding_error(
-                directive.span,
-                format!(
-                    "directive `.{}` expects an integer argument",
-                    directive.name
-                ),
-            ));
-            None
-        }
-    }
-}
-
 fn directive_address(
     directive: &DirectiveStatement,
     index: usize,
@@ -546,7 +465,19 @@ fn directive_address(
     left_shift: bool,
     emitter: &mut DiagnosticEmitter,
 ) -> Option<usize> {
-    let value = directive_int(directive, index, emitter)?;
+    let value = match directive.args.get(index) {
+        Some(DirectiveArg::Integer { value, .. } | DirectiveArg::Char { value, .. }) => *value,
+        _ => {
+            emitter.push(encoding_error(
+                directive.span,
+                format!(
+                    "directive `.{}` expects an integer argument",
+                    directive.name
+                ),
+            ));
+            return None;
+        }
+    };
     if value < 0 {
         emitter.push(encoding_error(
             directive.span,
@@ -557,14 +488,6 @@ fn directive_address(
 
     let value = value as usize;
     Some(if left_shift { value << shift } else { value })
-}
-
-fn literal_value(arg: &DirectiveArg) -> Option<i64> {
-    match arg {
-        DirectiveArg::Integer { value, .. } => Some(*value),
-        DirectiveArg::Char { value, .. } => Some(*value),
-        DirectiveArg::Identifier(_) | DirectiveArg::String(_) => None,
-    }
 }
 
 fn align_pages(
@@ -625,8 +548,13 @@ fn encoding_error(span: Span, message: impl Into<String>) -> Diagnostic {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+
     use crate::{
-        assemble::encode::Encoder, frontend::syntax::parser::Parser, preprocessing::Preprocessor,
+        assemble::encode::Encoder,
+        directives::incbin::IncbinContext,
+        frontend::syntax::parser::Parser,
+        preprocessing::Preprocessor,
     };
 
     fn parse(source: &str) -> crate::frontend::syntax::statements::Program {
@@ -638,6 +566,16 @@ mod tests {
             .parse()
             .into_result()
             .unwrap()
+    }
+
+    fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("assembler-{name}-{unique}.bin"));
+        fs::write(&path, bytes).unwrap();
+        path
     }
 
     #[test]
@@ -733,5 +671,32 @@ mod tests {
 
         assert_eq!(mov_shorthand_image, mov_long_form_image);
         assert_eq!(xchg_shorthand_image, xchg_long_form_image);
+    }
+
+    #[test]
+    fn encodes_incbin_bytes_into_output_image() {
+        let path = temp_file("encode", &[0xde, 0xad, 0xbe, 0xef]);
+        let source = format!(".incbin \"{}\"\nhalt\n", path.display());
+        let program = parse(&source);
+        let image = Encoder::with_context(IncbinContext::default())
+            .assemble(&program)
+            .into_result()
+            .unwrap();
+
+        assert_eq!(image, vec![0xde, 0xad, 0xbe, 0xef, 0x01, 0x00]);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rejects_relative_incbin_paths_without_base_dir() {
+        let program = parse(".incbin \"asset.bin\"\n");
+        let assembled = Encoder::new().assemble(&program);
+
+        assert_eq!(assembled.diagnostics.len(), 1);
+        assert_eq!(
+            assembled.diagnostics[0].message,
+            "directive `.incbin` requires an absolute path when reading source from stdin"
+        );
     }
 }

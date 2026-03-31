@@ -9,6 +9,7 @@ use std::{
 use assembler::{
     assemble::{encode::Encoder, page_checker::PageChecker},
     diagnostics::{FileId, Partial, print_diagnostics},
+    directives::incbin::IncbinContext,
     frontend::{
         analysis::{symbol_table::SymbolTable, validation::Validator},
         syntax::{
@@ -39,7 +40,7 @@ fn run() -> CliResult<ExitCode> {
     let diagnostics = if cli.preprocess_only {
         preprocess_source(&source, &cli.defines)
     } else {
-        compile_source(&source, &cli.defines)
+        compile_source(&source, &cli.defines, input_base_dir(&cli.input))
     };
 
     if !diagnostics.diagnostics.is_empty() {
@@ -246,7 +247,11 @@ fn preprocess_source(source: &str, defines: &[(String, String)]) -> Partial<Outp
         .map(|preprocessed| Output::Text(render_preprocessed_source(&preprocessed)))
 }
 
-fn compile_source(source: &str, defines: &[(String, String)]) -> Partial<Output> {
+fn compile_source(
+    source: &str,
+    defines: &[(String, String)],
+    incbin: IncbinContext,
+) -> Partial<Output> {
     let mut diagnostics = Vec::new();
 
     let preprocessed = Preprocessor::new().preprocess_with_defines(0 as FileId, source, defines);
@@ -268,19 +273,24 @@ fn compile_source(source: &str, defines: &[(String, String)]) -> Partial<Output>
         return Partial::failure(diagnostics);
     }
 
-    let symbols = SymbolTable::build(&program);
+    let symbols = SymbolTable::build_with_context(&program, &incbin);
+    let symbols_has_errors = !symbols.diagnostics.is_empty();
+    diagnostics.extend(symbols.diagnostics);
     let Some(symbols) = symbols.value else {
         return Partial::failure(diagnostics);
     };
+    if symbols_has_errors {
+        return Partial::failure(diagnostics);
+    }
 
-    let page_check = PageChecker::new().analyze(&program, &symbols);
+    let page_check = PageChecker::with_context(incbin.clone()).analyze(&program, &symbols);
     let page_check_has_errors = !page_check.diagnostics.is_empty();
     diagnostics.extend(page_check.diagnostics);
     if page_check_has_errors {
         return Partial::failure(diagnostics);
     }
 
-    let assembled = Encoder::new().assemble(&program);
+    let assembled = Encoder::with_context(incbin).assemble(&program);
     diagnostics.extend(assembled.diagnostics);
 
     if diagnostics.is_empty() {
@@ -293,6 +303,14 @@ fn compile_source(source: &str, defines: &[(String, String)]) -> Partial<Output>
             value: assembled.value.map(Output::Binary),
             diagnostics,
         }
+    }
+}
+
+fn input_base_dir(input: &str) -> IncbinContext {
+    if input == "-" {
+        IncbinContext::default()
+    } else {
+        IncbinContext::from_input_path(Some(input))
     }
 }
 
