@@ -387,6 +387,22 @@ Rules:
 
 `.fill` emits `count` copies of `value`.
 
+### `.incbin <path>`
+
+```asm
+.incbin "asset.bin"
+```
+
+`.incbin` emits the full contents of a binary file.
+
+Current behavior:
+
+- the argument must be a string path
+- only the path-only form is supported
+- relative paths are resolved against the top-level input file's directory
+- when reading source from stdin, relative `.incbin` paths are rejected and
+  absolute paths are required
+
 Rules:
 
 - `count` must be an integer or character literal
