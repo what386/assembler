@@ -409,7 +409,7 @@ shapes are described informally; validation is enforced by the assembler.
 | `bra` | `bra location, condition` |
 | `cal` | `cal location` |
 | `crets` | `crets imm, condition` |
-| `blit` | `blit [reg], [reg]` |
+| `blit` | reserved encoding form; use `blit.<op>.<source> [reg], [reg]` |
 | `bit` | `bit reg, reg, imm` |
 | `pop` | `pop reg` or `pop reg, imm` |
 | `psh` | `psh reg` or `psh reg, imm` |
@@ -456,6 +456,9 @@ These mnemonics are accepted and resolve to canonical instruction forms:
   `ret` also accepts a zero-operand short form
 - stack aliases: `peek`, `popf`, `dsp`, `poke`, `pshf`, `isp`
 - move / exchange aliases: `mov`, `xchg`
+- blit aliases: `blit.<op>.<source>`
+  `op` may be `copy`, `fill`, `and`, `or`, `xor`, or `mask`
+  `source` may be `ram`, `arom`, or `brom`
 - arithmetic aliases: `adc`, `adv`, `advc`, `sbb`, `sbv`, `sbvb`
 - bitwise aliases: `and`, `or`, `xor`, `imp`, `nand`, `nor`, `xnor`, `nimp`
 - shift aliases: `bsl`, `bsr`, `rol`, `bsxr`, `bsli`, `bsri`, `roli`, `bsxri`
