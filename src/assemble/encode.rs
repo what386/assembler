@@ -204,6 +204,44 @@ impl Encoder {
                     *cursor += 1;
                 }
             }
+            "fill" => {
+                let Some(count) = directive_int(directive, 0, emitter) else {
+                    return;
+                };
+                if count < 0 {
+                    emitter.push(encoding_error(
+                        directive.span,
+                        "directive `.fill` expects a non-negative count",
+                    ));
+                    return;
+                }
+
+                let Some(value) = directive.args.get(1).and_then(literal_value) else {
+                    emitter.push(encoding_error(
+                        directive.span,
+                        "directive `.fill` expects an integer or char fill value",
+                    ));
+                    return;
+                };
+
+                let Ok(byte) = encode_unsigned_value(
+                    value,
+                    8,
+                    directive.span,
+                    "fill value does not fit in 8 bits",
+                ) else {
+                    emitter.push(encoding_error(
+                        directive.span,
+                        "fill value does not fit in 8 bits",
+                    ));
+                    return;
+                };
+
+                for _ in 0..count as usize {
+                    write_byte(image, *cursor, byte as u8);
+                    *cursor += 1;
+                }
+            }
             "string" => match directive.args.first() {
                 Some(DirectiveArg::String(value)) => {
                     for byte in value.bytes() {
@@ -216,22 +254,20 @@ impl Encoder {
                     "directive `.string` expects a string argument",
                 )),
             },
-            "zero" => {
-                let Some(count) = directive_int(directive, 0, emitter) else {
-                    return;
-                };
-                if count < 0 {
-                    emitter.push(encoding_error(
-                        directive.span,
-                        "directive `.zero` expects a non-negative count",
-                    ));
-                    return;
+            "cstring" => match directive.args.first() {
+                Some(DirectiveArg::String(value)) => {
+                    for byte in value.bytes() {
+                        write_byte(image, *cursor, byte);
+                        *cursor += 1;
+                    }
+                    write_byte(image, *cursor, 0);
+                    *cursor += 1;
                 }
-
-                let count = count as usize;
-                ensure_size(image, *cursor + count);
-                *cursor += count;
-            }
+                _ => emitter.push(encoding_error(
+                    directive.span,
+                    "directive `.cstring` expects a string argument",
+                )),
+            },
             other => emitter.push(encoding_error(
                 directive.span,
                 format!("directive `.{other}` cannot be encoded"),
@@ -655,15 +691,15 @@ mod tests {
     #[test]
     fn encodes_layout_and_data_directives_into_flat_image() {
         let program =
-            parse(".page 1\nhalt\n.org 0x0084\n.bytes 0xaa, 'B'\n.zero 2\n.string \"hi\"\n");
+            parse(".page 1\nhalt\n.org 0x0084\n.bytes 0xaa, 'B'\n.fill 2, 0x00\n.string \"hi\"\n.cstring \"!\"\n");
         let image = Encoder::new().assemble(&program).into_result().unwrap();
 
-        assert_eq!(image.len(), 0x008a);
+        assert_eq!(image.len(), 0x008c);
         assert_eq!(&image[0x0080..0x0082], &[0x01, 0x00]);
         assert_eq!(&image[0x0082..0x0084], &[0x00, 0x00]);
         assert_eq!(
-            &image[0x0084..0x008a],
-            &[0xaa, b'B', 0x00, 0x00, b'h', b'i']
+            &image[0x0084..0x008c],
+            &[0xaa, b'B', 0x00, 0x00, b'h', b'i', b'!', 0x00]
         );
     }
 
@@ -685,5 +721,14 @@ mod tests {
 
         assert_eq!(assembled.diagnostics.len(), 1);
         assert_eq!(assembled.value.unwrap(), vec![0x01, 0x00]);
+    }
+
+    #[test]
+    fn rejects_zero_directive_as_unsupported() {
+        let program = parse(".zero 2\n");
+        let assembled = Encoder::new().assemble(&program);
+
+        assert_eq!(assembled.diagnostics.len(), 1);
+        assert_eq!(assembled.diagnostics[0].message, "directive `.zero` cannot be encoded");
     }
 }
