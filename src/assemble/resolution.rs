@@ -1,7 +1,7 @@
 use crate::{
     diagnostics::{Diagnostic, DiagnosticCode, DiagnosticEmitter, DiagnosticLabel, Partial, Span},
     frontend::{
-        analysis::{isa::lookup_instruction, symbol_table::SymbolTable},
+        analysis::{isa::{lookup_instruction, Bitfield}, symbol_table::SymbolTable},
         syntax::statements::{
             Address, AltCondition, Condition, InstructionStatement, Operand, Program, Register,
             Statement, StdCondition,
@@ -11,6 +11,8 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedInstruction {
+    pub bits: &'static str,
+    pub bitfields: &'static [Bitfield],
     pub mnemonic: String,
     pub kind: Option<u8>,
     pub operands: Vec<ResolvedOperand>,
@@ -103,7 +105,8 @@ impl Resolver {
         instruction: &InstructionStatement,
         symbols: &SymbolTable,
     ) -> Result<ResolvedInstruction, Diagnostic> {
-        let spec = lookup_instruction(&instruction.mnemonic).ok_or_else(|| {
+        let spec = lookup_instruction(&instruction.mnemonic, instruction.operands.len())
+            .ok_or_else(|| {
             Diagnostic::error_code(DiagnosticCode::InvalidOperand(format!(
                 "unknown instruction `{}`",
                 instruction.mnemonic
@@ -113,16 +116,34 @@ impl Resolver {
                 format!("`{}` is not a known instruction", instruction.mnemonic),
             ))
         })?;
+        let bits = spec.bits;
+        let bitfields = spec.bitfields;
         let mnemonic = spec.resolved_mnemonic.to_owned();
         let kind = spec.kind;
+        let mut operands = vec![None; bitfield_operand_count(bitfields)];
 
-        let operands = instruction
-            .operands
-            .iter()
-            .map(|operand| self.resolve_operand(operand, instruction.span, symbols))
-            .collect::<Result<Vec<_>, _>>()?;
+        for (operand, format) in instruction.operands.iter().zip(spec.operand_formats()) {
+            operands[usize::from(format.operand_order)] =
+                Some(self.resolve_operand(operand, instruction.span, symbols)?);
+        }
+
+        let operands = operands
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                Diagnostic::error_code(DiagnosticCode::InvalidOperand(format!(
+                    "instruction `{}` has an invalid operand mapping",
+                    instruction.mnemonic
+                )))
+                .with_label(DiagnosticLabel::new(
+                    instruction.span,
+                    "instruction operands could not be resolved".to_owned(),
+                ))
+            })?;
 
         Ok(ResolvedInstruction {
+            bits,
+            bitfields,
             mnemonic,
             kind,
             operands,
@@ -213,6 +234,13 @@ fn resolve_condition(condition: &Condition) -> ResolvedCondition {
     }
 }
 
+fn bitfield_operand_count(bitfields: &[Bitfield]) -> usize {
+    bitfields
+        .iter()
+        .filter(|bitfield| matches!(bitfield, Bitfield::Operand(_)))
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -258,7 +286,9 @@ mod tests {
 
     #[test]
     fn canonicalizes_aliases_and_preserves_pseudos() {
-        let program = parse("start:\nmov r1, r2, ?always\nadd r3, r4, r5\ncmp r6, r7\nhalt\n");
+        let program = parse(
+            "start:\nmov r1, r2, ?always\nblit.mask.brom [r3], [r4]\nadd r5, r6, r7\ncmp r0, r1\nhalt\n",
+        );
         let symbols = SymbolTable::build(&program).into_result().unwrap();
         let resolved = Resolver::new()
             .resolve_program(&program, &symbols)
@@ -267,12 +297,58 @@ mod tests {
 
         assert_eq!(resolved[0].mnemonic, "cmov");
         assert_eq!(resolved[0].kind, Some(0));
-        assert_eq!(resolved[1].mnemonic, "add");
-        assert_eq!(resolved[1].kind, Some(0));
-        assert_eq!(resolved[2].mnemonic, "cmp");
-        assert_eq!(resolved[2].kind, None);
-        assert_eq!(resolved[3].mnemonic, "halt");
+        assert_eq!(resolved[1].mnemonic, "blit");
+        assert_eq!(resolved[1].kind, Some(0b10101));
+        assert_eq!(resolved[2].mnemonic, "add");
+        assert_eq!(resolved[2].kind, Some(0));
+        assert_eq!(resolved[3].mnemonic, "cmp");
         assert_eq!(resolved[3].kind, None);
+        assert_eq!(resolved[4].mnemonic, "halt");
+        assert_eq!(resolved[4].kind, None);
+    }
+
+    #[test]
+    fn resolves_structured_blit_aliases() {
+        let program = parse("blit.copy.ram [r1], [r2]\nblit.fill.arom [r3], [r4]\n");
+        let symbols = SymbolTable::build(&program).into_result().unwrap();
+        let resolved = Resolver::new()
+            .resolve_program(&program, &symbols)
+            .into_result()
+            .unwrap();
+
+        assert_eq!(resolved[0].mnemonic, "blit");
+        assert_eq!(resolved[0].kind, Some(0b00000));
+        assert!(matches!(
+            resolved[0].operands[0],
+            super::ResolvedOperand::Address(super::ResolvedAddress::Pointer {
+                register: 1,
+                offset: 0,
+            })
+        ));
+        assert!(matches!(
+            resolved[0].operands[1],
+            super::ResolvedOperand::Address(super::ResolvedAddress::Pointer {
+                register: 2,
+                offset: 0,
+            })
+        ));
+
+        assert_eq!(resolved[1].mnemonic, "blit");
+        assert_eq!(resolved[1].kind, Some(0b01001));
+        assert!(matches!(
+            resolved[1].operands[0],
+            super::ResolvedOperand::Address(super::ResolvedAddress::Pointer {
+                register: 3,
+                offset: 0,
+            })
+        ));
+        assert!(matches!(
+            resolved[1].operands[1],
+            super::ResolvedOperand::Address(super::ResolvedAddress::Pointer {
+                register: 4,
+                offset: 0,
+            })
+        ));
     }
 
     #[test]
@@ -318,6 +394,58 @@ mod tests {
             resolved[1].operands[0],
             super::ResolvedOperand::Immediate(3)
         ));
+    }
+
+    #[test]
+    fn resolves_short_forms_to_canonical_operands() {
+        let program = parse("mov r3, r4\nxchg r5, r6\nret\nbrk ?equal\npeek r1\npoke r2\n");
+        let symbols = SymbolTable::build(&program).into_result().unwrap();
+        let resolved = Resolver::new()
+            .resolve_program(&program, &symbols)
+            .into_result()
+            .unwrap();
+
+        assert_eq!(resolved[0].mnemonic, "cmov");
+        assert_eq!(resolved[0].kind, Some(0));
+        assert!(matches!(resolved[0].operands[0], super::ResolvedOperand::Register(3)));
+        assert!(matches!(resolved[0].operands[1], super::ResolvedOperand::Register(4)));
+        assert_eq!(resolved[0].operands.len(), 2);
+
+        assert_eq!(resolved[1].mnemonic, "cmov");
+        assert_eq!(resolved[1].kind, Some(1));
+        assert!(matches!(
+            resolved[1].operands[0],
+            super::ResolvedOperand::Register(5)
+        ));
+        assert!(matches!(
+            resolved[1].operands[1],
+            super::ResolvedOperand::Register(6)
+        ));
+        assert_eq!(resolved[1].operands.len(), 2);
+
+        assert_eq!(resolved[2].mnemonic, "crets");
+        assert_eq!(resolved[2].kind, Some(0));
+        assert!(resolved[2].operands.is_empty());
+
+        assert_eq!(resolved[3].mnemonic, "crets");
+        assert_eq!(resolved[3].kind, Some(1));
+        assert!(matches!(
+            resolved[3].operands[0],
+            super::ResolvedOperand::Condition(super::ResolvedCondition::Standard(
+                super::ResolvedStdCondition::Equal
+            ))
+        ));
+        assert_eq!(resolved[3].operands.len(), 1);
+
+        assert_eq!(resolved[4].mnemonic, "pop");
+        assert_eq!(resolved[4].kind, Some(1));
+        assert!(matches!(resolved[4].operands[0], super::ResolvedOperand::Register(1)));
+        assert_eq!(resolved[4].operands.len(), 1);
+
+        assert_eq!(resolved[5].mnemonic, "psh");
+        assert_eq!(resolved[5].kind, Some(1));
+        assert!(matches!(resolved[5].operands[0], super::ResolvedOperand::Register(2)));
+        assert_eq!(resolved[5].operands.len(), 1);
     }
 
     #[test]

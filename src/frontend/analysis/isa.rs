@@ -51,7 +51,6 @@ impl InstructionSpec {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InstOverload {
-    pub mnemonic: &'static str,
     pub resolved_mnemonic: &'static str,
     pub bitfields: &'static [Bitfield],
 }
@@ -134,16 +133,8 @@ macro_rules! inst {
 }
 
 macro_rules! overload {
-    ($name:literal, [$($field:expr),* $(,)?]) => {
+    ($resolved:literal, [$($field:expr),* $(,)?]) => {
         InstOverload {
-            mnemonic: $name,
-            resolved_mnemonic: $name,
-            bitfields: &[$($field),*],
-        }
-    };
-    ($name:literal => $resolved:literal, [$($field:expr),* $(,)?]) => {
-        InstOverload {
-            mnemonic: $name,
             resolved_mnemonic: $resolved,
             bitfields: &[$($field),*],
         }
@@ -190,8 +181,9 @@ pub const INSTRUCTION_SET: &[InstFmt] = &[
 pub const INSTRUCTION_OVERLOADS: &[InstOverload] = &[
     overload!("pop",  [reg!(0),  kind!(2), pad!(0,6)]),            // pop stack without offset
     overload!("psh",  [reg!(0),  kind!(2), pad!(0,6)]),            // push stack without offset
-    overload!("ret" => "crets", [pad!(0b111,3), kind!(2), pad!(0,6)]), // return shorthand
-    overload!("ret" => "crets", [cond!(0), kind!(2), pad!(0,6)]),      // conditional return shorthand
+    overload!("cmov", [reg!(0),  reg!(1), kind!(2), pad!(0b111,3)]), // move/exchange without condition
+    overload!("crets", [pad!(0b111,3), kind!(2), pad!(0,6)]), // return shorthand
+    overload!("crets", [cond!(0), kind!(2), pad!(0,6)]),      // conditional return shorthand
 ];
 
 #[rustfmt::skip]
@@ -285,9 +277,12 @@ pub static INSTRUCTION_ALIASES: phf::Map<&'static str, (&'static str, u8)> = phf
 };
 
 pub fn lookup_instruction(mnemonic: &str, operand_count: usize) -> Option<InstructionSpec> {
-    if let Some(overload) = instruction_overload(mnemonic, operand_count) {
+    let alias = resolve_instruction_alias(mnemonic).or_else(|| resolve_blit_alias(mnemonic));
+    let overload_family = alias.map_or(mnemonic, |(resolved_mnemonic, _)| resolved_mnemonic);
+    let kind = alias.map(|(_, kind)| kind);
+
+    if let Some(overload) = instruction_overload(overload_family, operand_count) {
         let bits = instruction_format(INSTRUCTION_SET, overload.resolved_mnemonic)?.bits;
-        let kind = INSTRUCTION_ALIASES.get(mnemonic).map(|(_, kind)| *kind);
         return Some(InstructionSpec {
             bits,
             bitfields: overload.bitfields,
@@ -296,7 +291,7 @@ pub fn lookup_instruction(mnemonic: &str, operand_count: usize) -> Option<Instru
         });
     }
 
-    if let Some((resolved_mnemonic, kind)) = INSTRUCTION_ALIASES.get(mnemonic) {
+    if let Some((resolved_mnemonic, kind)) = alias {
         let fmt = instruction_format(INSTRUCTION_SET, resolved_mnemonic)?;
         if operand_count != operand_formats_for_bitfields(fmt.bitfields).len() {
             return None;
@@ -305,11 +300,11 @@ pub fn lookup_instruction(mnemonic: &str, operand_count: usize) -> Option<Instru
             bits: fmt.bits,
             bitfields: fmt.bitfields,
             resolved_mnemonic,
-            kind: Some(*kind),
+            kind: Some(kind),
         });
     }
 
-    if !matches!(mnemonic, "func" | "ctrl")
+    if !matches!(mnemonic, "func" | "ctrl" | "blit")
         && let Some(fmt) = instruction_format(INSTRUCTION_SET, mnemonic)
         && operand_count == operand_formats_for_bitfields(fmt.bitfields).len()
     {
@@ -333,11 +328,53 @@ pub fn lookup_instruction(mnemonic: &str, operand_count: usize) -> Option<Instru
     })
 }
 
-fn instruction_overload(mnemonic: &str, operand_count: usize) -> Option<&'static InstOverload> {
+fn resolve_instruction_alias(mnemonic: &str) -> Option<(&'static str, u8)> {
+    INSTRUCTION_ALIASES
+        .get(mnemonic)
+        .map(|(resolved_mnemonic, kind)| (*resolved_mnemonic, *kind))
+}
+
+fn resolve_blit_alias(mnemonic: &str) -> Option<(&'static str, u8)> {
+    let mut parts = mnemonic.split('.');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("blit"), Some(op), Some(source), None) => {
+            let op_bits = blit_op_bits(op)?;
+            let source_bits = blit_source_bits(source)?;
+            Some(("blit", (source_bits << 3) | op_bits))
+        }
+        _ => None,
+    }
+}
+
+fn blit_op_bits(op: &str) -> Option<u8> {
+    match op {
+        "copy" => Some(0b000),
+        "fill" => Some(0b001),
+        "and" => Some(0b010),
+        "or" => Some(0b011),
+        "xor" => Some(0b100),
+        "mask" => Some(0b101),
+        _ => None,
+    }
+}
+
+fn blit_source_bits(source: &str) -> Option<u8> {
+    match source {
+        "ram" => Some(0b00),
+        "arom" => Some(0b01),
+        "brom" => Some(0b10),
+        _ => None,
+    }
+}
+
+fn instruction_overload(
+    resolved_mnemonic: &str,
+    operand_count: usize,
+) -> Option<&'static InstOverload> {
     INSTRUCTION_OVERLOADS
         .iter()
         .find(|overload| {
-            overload.mnemonic == mnemonic
+            overload.resolved_mnemonic == resolved_mnemonic
                 && operand_formats_for_bitfields(overload.bitfields).len() == operand_count
         })
 }
@@ -354,4 +391,101 @@ fn operand_formats_for_bitfields(bitfields: &[Bitfield]) -> Vec<OperandFormat> {
             Bitfield::Kind(_) | Bitfield::Pad { .. } => None,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{lookup_instruction, OpFormatKind};
+
+    #[test]
+    fn overloads_apply_to_pop_family_aliases() {
+        for (mnemonic, expected_kind) in [("pop", 0), ("peek", 1), ("popf", 2), ("dsp", 3)] {
+            let spec = lookup_instruction(mnemonic, 1).unwrap();
+
+            assert_eq!(spec.resolved_mnemonic, "pop");
+            assert_eq!(spec.kind, Some(expected_kind));
+
+            let operands = spec.operand_formats();
+            assert_eq!(operands.len(), 1);
+            assert!(matches!(operands[0].kind, OpFormatKind::Register));
+        }
+    }
+
+    #[test]
+    fn overloads_apply_to_psh_family_aliases() {
+        for (mnemonic, expected_kind) in [("psh", 0), ("poke", 1), ("pshf", 2), ("isp", 3)] {
+            let spec = lookup_instruction(mnemonic, 1).unwrap();
+
+            assert_eq!(spec.resolved_mnemonic, "psh");
+            assert_eq!(spec.kind, Some(expected_kind));
+
+            let operands = spec.operand_formats();
+            assert_eq!(operands.len(), 1);
+            assert!(matches!(operands[0].kind, OpFormatKind::Register));
+        }
+    }
+
+    #[test]
+    fn overloads_apply_to_crets_family_aliases() {
+        for (mnemonic, expected_kind) in [("ret", 0), ("brk", 1), ("iret", 3)] {
+            let spec = lookup_instruction(mnemonic, 0).unwrap();
+            assert_eq!(spec.resolved_mnemonic, "crets");
+            assert_eq!(spec.kind, Some(expected_kind));
+
+            let spec = lookup_instruction(mnemonic, 1).unwrap();
+            assert_eq!(spec.resolved_mnemonic, "crets");
+            assert_eq!(spec.kind, Some(expected_kind));
+
+            let operands = spec.operand_formats();
+            assert_eq!(operands.len(), 1);
+            assert!(matches!(operands[0].kind, OpFormatKind::Condition));
+        }
+    }
+
+    #[test]
+    fn overloads_apply_to_cmov_family_aliases() {
+        for (mnemonic, expected_kind) in [("mov", 0), ("xchg", 1)] {
+            let spec = lookup_instruction(mnemonic, 2).unwrap();
+
+            assert_eq!(spec.resolved_mnemonic, "cmov");
+            assert_eq!(spec.kind, Some(expected_kind));
+
+            let operands = spec.operand_formats();
+            assert_eq!(operands.len(), 2);
+            assert!(matches!(operands[0].kind, OpFormatKind::Register));
+            assert!(matches!(operands[1].kind, OpFormatKind::Register));
+        }
+    }
+
+    #[test]
+    fn resolves_structured_blit_aliases() {
+        for (mnemonic, expected_kind) in [
+            ("blit.copy.ram", 0b00000),
+            ("blit.fill.arom", 0b01001),
+            ("blit.mask.brom", 0b10101),
+        ] {
+            let spec = lookup_instruction(mnemonic, 2).unwrap();
+
+            assert_eq!(spec.resolved_mnemonic, "blit");
+            assert_eq!(spec.kind, Some(expected_kind));
+
+            let operands = spec.operand_formats();
+            assert_eq!(operands.len(), 2);
+            assert!(matches!(operands[0].kind, OpFormatKind::Pointer));
+            assert!(matches!(operands[1].kind, OpFormatKind::Pointer));
+        }
+    }
+
+    #[test]
+    fn rejects_raw_and_malformed_blit_names() {
+        for mnemonic in [
+            "blit",
+            "blit.copy",
+            "blit.ram.copy",
+            "blit.copy.flash",
+            "blit.foo.ram",
+        ] {
+            assert!(lookup_instruction(mnemonic, 2).is_none());
+        }
+    }
 }

@@ -5,10 +5,7 @@ use crate::{
     assemble::encodings::encode_condition,
     diagnostics::{Diagnostic, DiagnosticCode, DiagnosticEmitter, DiagnosticLabel, Partial, Span},
     frontend::{
-        analysis::{
-            isa::{Bitfield, INSTRUCTION_SET, InstFmt, OpFormatKind, PSEUDO_INSTRUCTION_SET},
-            symbol_table::SymbolTable,
-        },
+        analysis::{isa::{Bitfield, OpFormatKind}, symbol_table::SymbolTable},
         syntax::statements::{DirectiveArg, DirectiveStatement, Program, Statement},
     },
 };
@@ -69,28 +66,18 @@ impl Encoder {
         instruction: &ResolvedInstruction,
         instruction_address: i64,
     ) -> Result<u16, Diagnostic> {
-        let fmt = instruction_format(&instruction.mnemonic).ok_or_else(|| {
-            encoding_error(
-                instruction.span,
-                format!(
-                    "instruction `{}` has no encodable format",
-                    instruction.mnemonic
-                ),
-            )
-        })?;
-
         let mut word = 0u16;
         let mut written_bits = 0u8;
 
         push_bits(
             &mut word,
             &mut written_bits,
-            parse_opcode_bits(fmt.bits),
-            fmt.bits.len() as u8,
+            parse_opcode_bits(instruction.bits),
+            instruction.bits.len() as u8,
             instruction.span,
         )?;
 
-        for field in fmt.bitfields {
+        for field in instruction.bitfields {
             match field {
                 Bitfield::Operand(operand) => {
                     let value = instruction
@@ -456,17 +443,6 @@ fn encode_location_like_operand(operand: &ResolvedOperand, span: Span) -> Result
     }
 }
 
-fn instruction_format(mnemonic: &str) -> Option<&'static InstFmt> {
-    INSTRUCTION_SET
-        .iter()
-        .find(|fmt| fmt.mnemonic == mnemonic)
-        .or_else(|| {
-            PSEUDO_INSTRUCTION_SET
-                .iter()
-                .find(|fmt| fmt.mnemonic == mnemonic)
-        })
-}
-
 fn parse_opcode_bits(bits: &str) -> u32 {
     bits.bytes().fold(0u32, |acc, bit| match bit {
         b'0' => acc << 1,
@@ -730,5 +706,32 @@ mod tests {
 
         assert_eq!(assembled.diagnostics.len(), 1);
         assert_eq!(assembled.diagnostics[0].message, "directive `.zero` cannot be encoded");
+    }
+
+    #[test]
+    fn encodes_conditional_ret_shorthand_like_long_form() {
+        let shorthand = parse("ret ?equal\n");
+        let long_form = parse("ret 0, ?equal\n");
+
+        let shorthand_image = Encoder::new().assemble(&shorthand).into_result().unwrap();
+        let long_form_image = Encoder::new().assemble(&long_form).into_result().unwrap();
+
+        assert_eq!(shorthand_image, long_form_image);
+    }
+
+    #[test]
+    fn encodes_cmov_shorthand_like_long_form() {
+        let mov_shorthand = parse("mov r1, r2\n");
+        let mov_long_form = parse("mov r1, r2, ?always\n");
+        let xchg_shorthand = parse("xchg r3, r4\n");
+        let xchg_long_form = parse("xchg r3, r4, ?always\n");
+
+        let mov_shorthand_image = Encoder::new().assemble(&mov_shorthand).into_result().unwrap();
+        let mov_long_form_image = Encoder::new().assemble(&mov_long_form).into_result().unwrap();
+        let xchg_shorthand_image = Encoder::new().assemble(&xchg_shorthand).into_result().unwrap();
+        let xchg_long_form_image = Encoder::new().assemble(&xchg_long_form).into_result().unwrap();
+
+        assert_eq!(mov_shorthand_image, mov_long_form_image);
+        assert_eq!(xchg_shorthand_image, xchg_long_form_image);
     }
 }

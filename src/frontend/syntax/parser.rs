@@ -61,7 +61,7 @@ impl<'a> Parser<'a> {
     fn parse_directive(&mut self, start: Span) -> Result<Statement, Diagnostic> {
         self.bump();
         let (name, mut end_span) = self.parse_qualified_name()?;
-        let args = if name == "bytes" {
+        let args = if matches!(name.as_str(), "bytes" | "fill") {
             let (args, end) = self.parse_directive_args_with_commas()?;
             if let Some(end) = end {
                 end_span = end;
@@ -623,7 +623,7 @@ mod tests {
 
     #[test]
     fn parses_directives() {
-        let program = parse(".page 1\n.bytes 0x00, 0x1c, 0xff\n.string \"text\"\n");
+        let program = parse(".page 1\n.bytes 0x00, 0x1c, 0xff\n.fill 2, 0xaa\n.string \"text\"\n.cstring \"hi\"\n");
 
         assert!(matches!(
             &program.statements[0],
@@ -658,8 +658,31 @@ mod tests {
         assert!(matches!(
             &program.statements[2],
             Statement::Directive(directive)
+                if directive.name == "fill"
+                    && directive.args == vec![
+                        DirectiveArg::Integer {
+                            raw: "2".to_owned(),
+                            value: 2,
+                        },
+                        DirectiveArg::Integer {
+                            raw: "0xaa".to_owned(),
+                            value: 170,
+                        },
+                    ]
+        ));
+
+        assert!(matches!(
+            &program.statements[3],
+            Statement::Directive(directive)
                 if directive.name == "string"
                     && directive.args == vec![DirectiveArg::String("text".to_owned())]
+        ));
+
+        assert!(matches!(
+            &program.statements[4],
+            Statement::Directive(directive)
+                if directive.name == "cstring"
+                    && directive.args == vec![DirectiveArg::String("hi".to_owned())]
         ));
     }
 

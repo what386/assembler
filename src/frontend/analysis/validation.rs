@@ -57,7 +57,8 @@ impl Validator {
         &self,
         instruction: &InstructionStatement,
     ) -> Result<(), Diagnostic> {
-        let spec = lookup_instruction(&instruction.mnemonic).ok_or_else(|| {
+        let spec = lookup_instruction(&instruction.mnemonic, instruction.operands.len())
+            .ok_or_else(|| {
             self.instruction_error(
                 instruction,
                 format!("unknown instruction `{}`", instruction.mnemonic),
@@ -70,7 +71,7 @@ impl Validator {
 
     fn validate_directive(&self, directive: &DirectiveStatement) -> Result<(), Diagnostic> {
         match directive.name.as_str() {
-            "page" | "org" | "zero" => {
+            "page" | "org" => {
                 if matches!(
                     directive.args.first(),
                     Some(DirectiveArg::Integer { .. } | DirectiveArg::Char { .. })
@@ -80,11 +81,35 @@ impl Validator {
                     Err(self.directive_error(directive, "expected integer argument"))
                 }
             }
-            "string" => {
+            "string" | "cstring" => {
                 if matches!(directive.args.first(), Some(DirectiveArg::String(_))) {
                     Ok(())
                 } else {
                     Err(self.directive_error(directive, "expected string argument"))
+                }
+            }
+            "fill" => {
+                if directive.args.len() != 2 {
+                    return Err(self.directive_error(directive, "expected count and fill value"));
+                }
+
+                if !matches!(
+                    directive.args.first(),
+                    Some(DirectiveArg::Integer { .. } | DirectiveArg::Char { .. })
+                ) {
+                    return Err(self.directive_error(directive, "expected integer count"));
+                }
+
+                if matches!(
+                    directive.args.get(1),
+                    Some(DirectiveArg::Integer { .. } | DirectiveArg::Char { .. })
+                ) {
+                    Ok(())
+                } else {
+                    Err(self.directive_error(
+                        directive,
+                        "expected integer or char fill value",
+                    ))
                 }
             }
             "bytes" => {
@@ -289,7 +314,9 @@ mod tests {
 
     #[test]
     fn validates_known_instructions() {
-        let program = parse("start:\nlim r0, 1\nmlx r2, [r3+4]\nbra start, ?equal\n");
+        let program = parse(
+            "start:\nlim r0, 1\nmlx r2, [r3+4]\nblit.copy.ram [r1], [r2]\nbra start, ?equal\n",
+        );
         Validator::new()
             .validate_program(&program)
             .into_result()
@@ -298,7 +325,9 @@ mod tests {
 
     #[test]
     fn validates_alias_and_pseudo_instructions() {
-        let program = parse("mov r7, r6, ?always\npeek r2, 4\ncmp r1, r0\ninc r3\n");
+        let program = parse(
+            "mov r7, r6\nxchg r1, r0\npeek r2, 4\ndsp r2\ncmp r1, r0\ninc r3\nret\nbrk\niret ?equal\npop r5\npoke r6\n",
+        );
         Validator::new()
             .validate_program(&program)
             .into_result()
@@ -341,7 +370,7 @@ mod tests {
 
     #[test]
     fn rejects_raw_family_and_dotted_compat_names() {
-        for source in ["func 0\n", "ctrl 0\n", "func.halt\n"] {
+        for source in ["func 0\n", "ctrl 0\n", "func.halt\n", "blit [r0], [r1]\n"] {
             let program = parse(source);
             let errors = Validator::new()
                 .validate_program(&program)
@@ -371,5 +400,25 @@ mod tests {
             "first branch operand must be a label or address"
         );
         assert_eq!(errors[3].message, "expected integer argument");
+    }
+
+    #[test]
+    fn rejects_invalid_short_form_arities() {
+        let ret_program = parse("ret 1\n");
+        let ret_errors = Validator::new()
+            .validate_program(&ret_program)
+            .into_result()
+            .unwrap_err();
+        assert_eq!(ret_errors[0].message, "first operand must be a condition");
+
+        for source in ["pop\n", "psh\n"] {
+            let program = parse(source);
+            let errors = Validator::new()
+                .validate_program(&program)
+                .into_result()
+                .unwrap_err();
+
+            assert!(errors[0].message.starts_with("unknown instruction `"));
+        }
     }
 }

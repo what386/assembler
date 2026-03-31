@@ -87,7 +87,11 @@ fn apply_directive_location(
             Some(DirectiveArg::String(value)) => Ok(current + value.len() as i64),
             _ => Err(directive_error(directive, "expected string argument")),
         },
-        "zero" => {
+        "cstring" => match directive.args.first() {
+            Some(DirectiveArg::String(value)) => Ok(current + value.len() as i64 + 1),
+            _ => Err(directive_error(directive, "expected string argument")),
+        },
+        "fill" => {
             let count = expect_integer_arg(directive, 0)?;
             Ok(current + count)
         }
