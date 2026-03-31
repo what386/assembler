@@ -102,6 +102,28 @@ impl PageChecker {
                         }
                         cursor += directive.args.len() as i64;
                     }
+                    "fill" => {
+                        let Some(count) = directive_int(directive, 0, &mut emitter) else {
+                            continue;
+                        };
+                        if count < 0 {
+                            emitter.push(page_error(
+                                directive.span,
+                                "directive `.fill` expects a non-negative count",
+                            ));
+                            continue;
+                        }
+                        if let Some(page_start) = current_page_start {
+                            let next = cursor + count;
+                            if next > page_start + PAGE_SIZE_BYTES {
+                                emitter.push(page_error(
+                                    directive.span,
+                                    "directive `.fill` exceeds the current page",
+                                ));
+                            }
+                        }
+                        cursor += count;
+                    }
                     "string" => match directive.args.first() {
                         Some(DirectiveArg::String(value)) => {
                             if let Some(page_start) = current_page_start {
@@ -120,28 +142,28 @@ impl PageChecker {
                             "directive `.string` expects a string argument",
                         )),
                     },
-                    "zero" => {
-                        let Some(count) = directive_int(directive, 0, &mut emitter) else {
-                            continue;
-                        };
-                        if count < 0 {
-                            emitter.push(page_error(
-                                directive.span,
-                                "directive `.zero` expects a non-negative count",
-                            ));
-                            continue;
-                        }
-                        if let Some(page_start) = current_page_start {
-                            let next = cursor + count;
-                            if next > page_start + PAGE_SIZE_BYTES {
-                                emitter.push(page_error(
-                                    directive.span,
-                                    "directive `.zero` exceeds the current page",
-                                ));
+                    "cstring" => match directive.args.first() {
+                        Some(DirectiveArg::String(value)) => {
+                            if let Some(page_start) = current_page_start {
+                                let next = cursor + value.len() as i64 + 1;
+                                if next > page_start + PAGE_SIZE_BYTES {
+                                    emitter.push(page_error(
+                                        directive.span,
+                                        "directive `.cstring` exceeds the current page",
+                                    ));
+                                }
                             }
+                            cursor += value.len() as i64 + 1;
                         }
-                        cursor += count;
-                    }
+                        _ => emitter.push(page_error(
+                            directive.span,
+                            "directive `.cstring` expects a string argument",
+                        )),
+                    },
+                    "zero" => emitter.push(page_error(
+                        directive.span,
+                        "directive `.zero` is no longer supported",
+                    )),
                     _ => {}
                 },
             }
